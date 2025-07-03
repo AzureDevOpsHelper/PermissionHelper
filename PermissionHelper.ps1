@@ -8,6 +8,7 @@ function Get-MSALToken
         Write-Host "It will then ask you to pick a subscription, please choose a subscription that is associated with the tenant that backs your org."
         Connect-AzAccount 
         $result = Get-AzAccessToken -ResourceUrl '499b84ac-1321-427f-aa17-267ca6975798'
+        Clear-Host
     }
     catch
     {
@@ -22,6 +23,7 @@ function Get-MSALToken
         Write-Host "It will then ask you to pick a subscription, please choose a subscription that is associated with the tenant that backs your org."
         Connect-AzAccount -WarningAction 'SilentlyContinue' -ErrorAction 'Stop' -InformationAction 'SilentlyContinue' -ProgressAction 'SilentlyContinue'
         $result = Get-AzAccessToken -ResourceUrl '499b84ac-1321-427f-aa17-267ca6975798'
+        Clear-Host
     }
     return $result
 }
@@ -99,7 +101,79 @@ function GET-AzureDevOpsRestAPI {
 }#>
 }
 
+# PowerShell doesn't have a Main function like C# or Java, so we can just call the functions directly.
+    $orgname = "sagranvso"
+    $orgUrl = "https://dev.azure.com/$orgname"
+    $token = Get-MSALToken
+    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($token.Token))
+    $Authheader = "Bearer $plaintoken"
+    Write-Host "Token acquired for User: $($token.UserId) in TenantID: $($token.TenantId). Good until $($token.ExpiresOn)"     
+    $namespaceUrl = "$($orgUrl)/_apis/securitynamespaces?api-version=7.2-preview.1"
+    $namespaces = GET-AzureDevOpsRestAPI -RestAPIUrl $namespaceUrl -Authheader $Authheader
+    $queue = @()
+    $namespaces.results.value | ForEach-Object {
+        $namespace        = $_
+        $permissionUrl = $orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
+        $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
+        foreach ($permission in $permissionResult.results.value)
+        {
+            #((($permission.acesDictionary).psobject.Properties).Value)
+            foreach ($descriptor in ((($permission.acesDictionary).psobject.Properties).Value))
+            {  
+                $_descriptor = $descriptor.descriptor
+                #Write-Host "Processing Namespace: $($namespace.namespaceId) - $($namespace.displayName) - Token: $($permission.token)"
+                #Write-Host "Descriptor: $($_descriptor)"
+                $allowNullSafe                = ($null -eq $permission.acesDictionary."$_descriptor".allow) ? 0 : $permission.acesDictionary."$_descriptor".allow
+                $denyNullSafe                 = ($null -eq $permission.acesDictionary."$_descriptor".deny) ? 0 : $permission.acesDictionary."$_descriptor".deny
+                $effectiveAllowNullSafe       = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow
+                $effectiveDenyNullSafe        = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny
+                $tokenNullSafe   = ($null -eq $permission.token) ? "" : $permission.token
+                $enumactions  = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                foreach ( $action in $namespace.actions )
+                {
+                    if (( $allowNullSafe -band $action.bit ) -eq $action.bit ) 
+                    {
+                        $enumactions.Add($action.displayName, "Allow")
+                    }
+                    elseif (( $effectiveAllowNullSafe -band $action.bit ) -eq $action.bit )
+                    {
+                        $enumactions.Add($action.displayName, "Inherited Allow")
+                    }
+                    elseif (( $effectiveDenyNullSafe -band $action.bit ) -eq $action.bit )
+                    {
+                        $enumactions.Add($action.displayName, "Inherited Deny")
+                    }
+                    elseif (( $denyNullSafe -band $action.bit ) -eq $action.bit )
+                    {
+                        $enumactions.Add($action.displayName, "Deny")
+                    }
+                    else
+                    {
+                        $enumactions.Add($action.displayName, "Not Set")
+                    }
+                }  
+                $friendlyToken = $tokenNullSafe
+                $permissionitem = [pscustomobject]@{
+                    namespaceId          = $namespace.namespaceId
+                    namespaceName        = $namespace.name
+                    namespacedisplayName = $namespace.displayName
+                    inheritPermissions   = ($null -eq $permission.inheritPermissions) ? $false : $permission.inheritPermissions
+                    token                = $tokenNullSafe
+                    friendlyToken        = $friendlyToken
+                    descriptor           = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
+                    allow                = $allowNullSafe
+                    deny                 = $denyNullSafe
+                    effectiveAllow       = $effectiveAllowNullSafe
+                    effectiveDeny        = $effectiveDenyNullSafe
+                    enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
+                } 
 
-
-$token = Get-MSALToken
-
+                if ($permissionitem.allow -gt 0 -or $permissionitem.deny -gt 0 -or $permissionitem.effectiveAllow -gt 0 -or $permissionitem.effectiveDeny -gt 0)
+                {
+                    $queue += $permissionitem
+                    #Write-Host "Namespace: $($namespace.namespaceId) - $($namespace.displayName) - Token: $($permissionitem.friendlyToken) - $enumactions"
+                }
+            }
+        }
+    }
+    $queue | Export-Csv -Path ".\Permissions.csv" -NoTypeInformation -Force
