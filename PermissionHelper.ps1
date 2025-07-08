@@ -35,7 +35,6 @@ function Get-MSALToken {
     }
     return $result
 }
-
 function GET-AzureDevOpsRestAPI {
     param (
         [string]$Authheader,
@@ -110,7 +109,6 @@ function GET-AzureDevOpsRestAPI {
     return $results
 }#>
 }
-
 function Get-AzureDevOpsPermissions {
     param (
         [string]$Authheader,
@@ -184,8 +182,46 @@ function Get-AzureDevOpsPermissions {
         }
     }
 #    $queue | Export-Csv -Path ".\Permissions.csv" -NoTypeInformation -Force
-    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\Permissions.json" -Force
+    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
 }
+function Get-AzureDevOpsProjects {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    $projectsurl = $orgUrl + "/_apis/projects?stateFilter=All&api-version=2.2"
+    $projectResult =  GET-AzureDevOpsRestAPI -RestAPIUrl $projectsurl -Authheader $Authheader
+    $projectResult.results | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Projects.json" -Force
+}
+function Get-AzureDevOpsGroups {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    $allGroups = @()
+    $orgUrl = $orgUrl.Replace("dev.azure.com", "vssps.dev.azure.com")
+    $Result = $null
+    Do
+    {
+        if  ($null -eq $Result.responseHeaders."x-ms-continuationtoken")
+        {
+            $groupInfourl = "$($orgUrl)/_apis/graph/groups?api-version=7.1-preview.1"
+        }
+        else 
+        {
+            $groupInfourl = "$($orgUrl)/_apis/graph/groups?continuationToken=$($Result.responseHeaders."x-ms-continuationtoken")&api-version=7.1-preview.1"
+        }
+        $Result =  GET-AzureDevOpsRestAPI -RestAPIUrl $groupInfourl -Authheader $Authheader
+        $allGroups += $Result.results.value
+        #$Result.results.value | ForEach-Object {
+        #    $group = $_
+        #    $allGroups += $group
+        #}
+    }
+    While  ($null -ne $Result.responseHeaders."x-ms-continuationtoken")
+    $allGroups | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Groups.json" -Force
+}
+
 
 function Main {
     Write-Host "Please enter your Org Name"
@@ -194,21 +230,33 @@ function Main {
     $token = Get-MSALToken
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($token.Token))
     $Authheader = "Bearer $plaintoken"
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     Write-Host "Token acquired for User: $($token.UserId) in TenantID: $($token.TenantId). Good until $($token.ExpiresOn)"     
     Write-Host "Retrieving Azure DevOps permissions for Org: $orgName"
-
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
         Write-Host "Script path not found. Using current directory."
         $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -First 1
     }
-    Write-Host "Script path: $scriptPath"
-    $job = Start-ThreadJob -ScriptBlock {
+    #Write-Host "Script path: $scriptPath"
+    $PermissionsJob = Start-ThreadJob -ScriptBlock {
         param($Authheader, $orgUrl, $scriptPath)
         $env:IS_CHILD_JOB = $true
         . "$scriptPath"
         Get-AzureDevOpsPermissions -Authheader $Authheader -orgUrl $orgUrl
-    } -ArgumentList $Authheader, $orgUrl, $scriptPath
+    } -ArgumentList $Authheader, $orgUrl, $scriptPath -Name "GetPermissionsJob"
+    $ProjectsJob = Start-ThreadJob -ScriptBlock {
+        param($Authheader, $orgUrl, $scriptPath)
+        $env:IS_CHILD_JOB = $true
+        . "$scriptPath"
+        Get-AzureDevOpsProjects -Authheader $Authheader -orgUrl $orgUrl
+    } -ArgumentList $Authheader, $orgUrl, $scriptPath -Name "GetProjectsJob"
+    $GroupsJob = Start-ThreadJob -ScriptBlock {
+        param($Authheader, $orgUrl, $scriptPath)
+        $env:IS_CHILD_JOB = $true
+        . "$scriptPath"
+        Get-AzureDevOpsGroups -Authheader $Authheader -orgUrl $orgUrl
+    } -ArgumentList $Authheader, $orgUrl, $scriptPath -Name "GetGroupsJob"
     # We should be able to continue to start functions on threads here
     # We will need to Gather things like Identities, Groups, Teams, and Projects
     # I plan to save each result set to a file, and then combine them at the end.
@@ -219,10 +267,15 @@ function Main {
     # We can also use the X-RateLimit-Remaining header to determine how many requests we have left before we hit the rate limit.
     # If we hit the rate limit, we can wait for the X-RateLimit-Reset header to determine when we can start making requests again.
     # We can also use the X-RateLimit-Delay header to determine how long we need to wait before making the next request
-    Write-Host "Waiting for job to complete..."
-    Wait-Job -Job $job -Timeout 300
-    Write-Host "Job completed."
-    Receive-Job -Job $job
+    Wait-Job -Job $ProjectsJob -Timeout 300
+    Wait-Job -Job $GroupsJob -Timeout 300
+    Wait-Job -Job $PermissionsJob -Timeout 300
+
+    Receive-Job -Job $ProjectsJob
+    Receive-Job -Job $GroupsJob
+    Receive-Job -Job $PermissionsJob
+    $stopwatch.Stop()
+    Write-Host "Script execution time: $($stopwatch.Elapsed)"
 }
 
 # Only run Main if not running as a job (i.e., if $env:IS_CHILD_JOB is not set)
