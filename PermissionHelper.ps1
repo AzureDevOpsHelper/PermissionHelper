@@ -30,10 +30,28 @@ function Get-MSALToken {
         Write-Host "It may take a few seconds to load, please be patient."  
         Write-Host "It will then ask you to pick a subscription, please choose a subscription that is associated with the tenant that backs your org."
         Connect-AzAccount -WarningAction 'SilentlyContinue' -ErrorAction 'Stop' -InformationAction 'SilentlyContinue' -ProgressAction 'SilentlyContinue'
-        $result = Get-AzAccessToken -ResourceUrl '499b84ac-1321-427f-aa17-267ca6975798'
+        $result = Get-AzAccessToken -ResourceUrl '499b84ac-1321-427f-aa17-267ca6975798'        
         Clear-Host
     }
+    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
+    $AuthHeader = "Bearer $plaintoken"
+    $result | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
     return $result
+}
+function Update-ConsoleLine {
+    param (
+        [int]$Line = 0,
+        [string]$Message = ""
+    )
+    #$xAxis = [Console]::CursorLeft
+    #$yAxis = [Console]::CursorTop
+    [Console]::SetCursorPosition(0, $Line)
+    [Console]::Write(" " * ([Console]::BufferWidth))
+    [Console]::SetCursorPosition(0, $Line)
+    if ($Message -ne "") {
+            Write-Host $Message -NoNewline
+    }
+    #[Console]::SetCursorPosition($xAxis, $yAxis)
 }
 function GET-AzureDevOpsRestAPI {
     param (
@@ -66,65 +84,58 @@ function GET-AzureDevOpsRestAPI {
         $results.Add("results", $result)
         $results.Add("responseHeaders", $responseHeaders)
         $results.Add("statusCode", $statusCode)
+        if (($null -ne $responseHeaders."Retry-After") -and ($responseHeaders."Retry-After" -gt 0)){
+            $RetryAfter = 30.0
+            [double]::TryParse($responseHeaders."Retry-After", [ref]$RetryAfter)
+            Update-ConsoleLine -Line 15 -Message "$RestAPIURL returned: "
+            Update-ConsoleLine -Line 16 -Message "X-RateLimit-Remaining: $RetryAfter)"
+            Update-ConsoleLine -Line 17 -Message "Sleeping for $RetryAfter seconds to avoid throttling."
+            Start-Sleep -Seconds $RetryAfter
+        }
         $WarningPreference = $WP
         $ProgressPreference = $PP
+        Update-ConsoleLine -Line 15
+        Update-ConsoleLine -Line 16
+        Update-ConsoleLine -Line 17
         return $results
     }
     Catch {
-        
-        throw ("ERROR: `r`n" + 
-        "StatusCode: $($_.Exception.Response.StatusCode.value__) `r`n" +
-        "StatusDescription: $($_.Exception.Response.StatusDescription) `r`n" +
-        "ErrorDescription: $($_) `r`n" +
-        "at line $($_.InvocationInfo.ScriptLineNumber) `r`n`r`n" + 
-        "StatusCode: $statusCode`r`n" +
-        "Headers: + $responseHeaders`r`n" +
-        "Body: $Response`r`n" +
-        $_.Exception.Message)
+        Update-ConsoleLine -Line 18 "ERROR:" +
+        Update-ConsoleLine -Line 19 "RestAPIUrl: $RestAPIUrl"
+        Update-ConsoleLine -Line 20 "StatusCode: $($_.Exception.Response.StatusCode.value__)"
+        Update-ConsoleLine -Line 21 "ErrorDescription: $($_)"
+        Update-ConsoleLine -Line 22 "at line $($_.InvocationInfo.ScriptLineNumber)"
+        break
     }
-<#    finally {
-        #region Debug&Throttle
-        if #in theory this should add the details if debug is turned on OR if there is a non 200 pass OR if there is throttling happening 
-        (
-                ($Debug) `
-            -or (($null -ne $responseHeaders."Retry-After")           -and ($responseHeaders."Retry-After"           -gt 0)) `
-            -or (($null -ne $responseHeaders."X-RateLimit-Resource")  -and ($responseHeaders."X-RateLimit-Resource"  -ne "")) `
-            -or (($null -ne $responseHeaders."X-RateLimit-Delay")     -and ($responseHeaders."X-RateLimit-Delay"     -gt 0)) `
-            -or (($null -ne $responseHeaders."X-RateLimit-Limit")     -and ($responseHeaders."X-RateLimit-Limit"     -gt 0)) `
-            -or (($null -ne $responseHeaders."X-RateLimit-Remaining") -and ($responseHeaders."X-RateLimit-Remaining" -gt 0)) `
-            -or (($null -ne $responseHeaders."X-RateLimit-Reset")     -and ($responseHeaders."X-RateLimit-Reset"     -gt 0)) `
-        )
-        {
-            Write-Host "StatusCode: $statusCode`r`n"
-            Write-Host "Headers:"
-            Write-Host $responseHeaders
-            Write-Host "`r`nBody:`r`n"
-            Write-Host $Response | ConvertTo-Json -depth 100 
-        }
-        #endregion Debug&Throttle
-    }
-    $results.Add("responseHeaders", $responseHeaders)
-    $results.Add("statusCode", $statusCode)
-
-    return $results
-}#>
 }
 function Get-AzureDevOpsPermissions {
     param (
         [string]$Authheader,
         [string]$orgUrl
     )
-    # This function retrieves the permissions for all namespaces in the Azure DevOps organization.
-    # It uses the MSAL token to authenticate and make REST API calls to Azure DevOps.
-    # The results are returned as a collection of permission items.
     $namespaceUrl = "$($orgUrl)/_apis/securitynamespaces?api-version=7.2-preview.1"
     $namespaces = GET-AzureDevOpsRestAPI -RestAPIUrl $namespaceUrl -Authheader $Authheader
     $queue = @()
+    $i = 0
     $namespaces.results.value | ForEach-Object {
         $namespace        = $_
         $permissionUrl = $orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
         $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
-        foreach ($permission in $permissionResult.results.value)
+        $i +=  $permissionResult.results.Count
+        Update-ConsoleLine -Line 8 -Message "Aces Total: $i working on NamespaceId: $($namespace.namespaceId)"
+        $queue += $permissionResult.results.value           
+    }
+    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
+    Update-ConsoleLine -Line 8
+}
+function Process-Permissions {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    $queue = @()
+    $permissionResult = Get-Content -Path ".\data\Permissions.json" | ConvertFrom-Json
+    foreach ($permission in $permissionResult)
         {
             foreach ($descriptor in ((($permission.acesDictionary).psobject.Properties).Value))
             {  
@@ -180,9 +191,7 @@ function Get-AzureDevOpsPermissions {
                 }
             }
         }
-    }
-#    $queue | Export-Csv -Path ".\Permissions.csv" -NoTypeInformation -Force
-    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
+    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\ProcessedPermissions.json" -Force
 }
 function Get-AzureDevOpsProjects {
     param (
@@ -219,63 +228,142 @@ function Get-AzureDevOpsGroups {
         #}
     }
     While  ($null -ne $Result.responseHeaders."x-ms-continuationtoken")
+    foreach ($group in $allGroups)
+    {
+        #Write-Host $group.descriptor
+        $descriptor = ($group.descriptor).Split(".")
+        $crumb = $descriptor[1]
+        #Write-Host $crumb
+        switch ($crumb.Length % 4) {
+            2 { $crumb += '==' }
+            3 { $crumb += '=' }
+        }
+        $decode = $([Text.Encoding]::Utf8.GetString([Convert]::FromBase64String($crumb)))
+        $group | Add-Member -NotePropertyName 'SID' -NotePropertyValue $decode.ToString()
+    }
     $allGroups | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Groups.json" -Force
 }
+function Get-AzureDevOpsRepositories {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    $reposUrl = "$($orgUrl)/_apis/git/repositories?api-version=7.2-preview.1"
+    $reposResult = GET-AzureDevOpsRestAPI -RestAPIUrl $reposUrl -Authheader $Authheader
+    $reposResult.results | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Repositories.json" -Force
+}
+function Get-AzureDevOpsUsers {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    $allIdentities = @()
+    $allUsers = @()
+    $orgUrl = $orgUrl.Replace("dev.azure.com", "vssps.dev.azure.com")
+    $Result = $null
+    Do
+    {
+        if ($null -eq $Result.responseHeaders."x-ms-continuationtoken") {
+            $usersUrl = "$($orgUrl)/_apis/graph/users?api-version=7.2-preview.1"
+        }
+        else {
+            $usersUrl = "$($orgUrl)/_apis/graph/users?continuationToken=$($Result.responseHeaders."x-ms-continuationtoken")&api-version=7.2-preview.1"
+        }
+        $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $usersUrl -Authheader $Authheader
+        Update-ConsoleLine -Line 9 -Message "Users Total: $($allUsers.Count)"
+        $allUsers += $Result.results.value
+        
+    }
+    While ($null -ne $Result.responseHeaders."x-ms-continuationtoken")
 
-
+    Update-ConsoleLine -Line 9 -Message "Saving Users to file"
+    $allUsers | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Users.json" -Force
+    $descriptors = $allUsers | Select-Object -ExpandProperty descriptor
+    $allUsers = $null
+    #this works but is inefficent, might want to add parallel processing later
+    for ($i = 0; $i -lt $descriptors.Count; $i += 60) {
+        $batch = $descriptors[$i..([math]::Min($i+59, $descriptors.Count-1))]
+        $descriptorString = $batch -join ','
+        $identityUrl = "$($orgUrl)/_apis/identities?subjectDescriptors=$descriptorString&queryMembership=Direct&api-version=7.2-preview.1"
+        $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $identityUrl -Authheader $Authheader
+        Update-ConsoleLine -Line 9 -Message "Users Total: $i of $($descriptors.Count)" 
+        $queue += $permissionResult.results.value 
+        $allIdentities += $Result.results.value
+    }
+    $allIdentities | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Identites.json" -Force
+    Update-ConsoleLine -Line 9
+}
 function Main {
     Write-Host "Please enter your Org Name"
     $orgName = Read-Host
     $orgUrl = "https://dev.azure.com/$orgname"
     $token = Get-MSALToken
-    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($token.Token))
-    $Authheader = "Bearer $plaintoken"
+    $Authheader = $token.AuthHeader
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-    Write-Host "Token acquired for User: $($token.UserId) in TenantID: $($token.TenantId). Good until $($token.ExpiresOn)"     
-    Write-Host "Retrieving Azure DevOps permissions for Org: $orgName"
     $scriptPath = $MyInvocation.MyCommand.Path
     if (-not $scriptPath) {
-        Write-Host "Script path not found. Using current directory."
-        $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -First 1
+        $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
     }
-    #Write-Host "Script path: $scriptPath"
-    $PermissionsJob = Start-ThreadJob -ScriptBlock {
-        param($Authheader, $orgUrl, $scriptPath)
-        $env:IS_CHILD_JOB = $true
-        . "$scriptPath"
-        Get-AzureDevOpsPermissions -Authheader $Authheader -orgUrl $orgUrl
-    } -ArgumentList $Authheader, $orgUrl, $scriptPath -Name "GetPermissionsJob"
-    $ProjectsJob = Start-ThreadJob -ScriptBlock {
-        param($Authheader, $orgUrl, $scriptPath)
-        $env:IS_CHILD_JOB = $true
-        . "$scriptPath"
-        Get-AzureDevOpsProjects -Authheader $Authheader -orgUrl $orgUrl
-    } -ArgumentList $Authheader, $orgUrl, $scriptPath -Name "GetProjectsJob"
-    $GroupsJob = Start-ThreadJob -ScriptBlock {
-        param($Authheader, $orgUrl, $scriptPath)
-        $env:IS_CHILD_JOB = $true
-        . "$scriptPath"
-        Get-AzureDevOpsGroups -Authheader $Authheader -orgUrl $orgUrl
-    } -ArgumentList $Authheader, $orgUrl, $scriptPath -Name "GetGroupsJob"
-    # We should be able to continue to start functions on threads here
-    # We will need to Gather things like Identities, Groups, Teams, and Projects
-    # I plan to save each result set to a file, and then combine them at the end.
-    # this seems to be the best way to do this, as it allows us to run multiple jobs in parallel.
-    # and also for large orgs, not overwhelm system memory trying to hold all the results in memory at once.
-    # we will also need to handle throttling, as we will be making a lot of heavy API calls.
-    # we can watch for the Retry-After header in the response, and if it is present, we can wait that many seconds before retrying the request.
-    # We can also use the X-RateLimit-Remaining header to determine how many requests we have left before we hit the rate limit.
-    # If we hit the rate limit, we can wait for the X-RateLimit-Reset header to determine when we can start making requests again.
-    # We can also use the X-RateLimit-Delay header to determine how long we need to wait before making the next request
-    Wait-Job -Job $ProjectsJob -Timeout 300
-    Wait-Job -Job $GroupsJob -Timeout 300
-    Wait-Job -Job $PermissionsJob -Timeout 300
-
-    Receive-Job -Job $ProjectsJob
-    Receive-Job -Job $GroupsJob
-    Receive-Job -Job $PermissionsJob
+    $jobSpecs = @(
+        @{ Name = "GetPermissionsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsPermissions -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Streaming = $Host },
+        @{ Name = "GetProjectsJob";    Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath) },
+        @{ Name = "GetGroupsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath) },
+        @{ Name = "GetUsersJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Streaming = $Host }
+    )
+    $jobs = @()
+    foreach ($spec in $jobSpecs) {
+        if ($spec.Streaming) {
+            $jobs += Start-ThreadJob -ScriptBlock $spec.Script -ArgumentList $spec.Args -Name $spec.Name -StreamingHost $spec.Streaming
+        } else {
+            $jobs += Start-ThreadJob -ScriptBlock $spec.Script -ArgumentList $spec.Args -Name $spec.Name
+        }
+    }
+    clear-host
+    [Console]::CursorVisible = $false
+    $timerpos = $jobs.Count + 1
+    while ($jobs.Count -gt 0) {
+        $complete = @()
+        foreach ($job in $jobs) {
+            $state = $job.State
+            if ($state -eq "Completed") {
+                Receive-Job -Job $job *>$null
+                Remove-Job -Job $job -Force -ErrorAction SilentlyContinue *>$null
+                $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }
+                $done = [pscustomobject]@{
+                    id = $job.Id
+                    Name = $job.Name
+                    State = $state
+                }
+                $complete += $done
+                Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $state"
+            }
+            elseif ($state -eq "Failed"){
+                Update-ConsoleLine -Line $job.Id "$($job.Name): $state"
+                Update-ConsoleLine -Line 18 
+                Receive-Job -Job $jobs *>$null
+                Remove-Job -Job $jobs -Force *>$null
+                exit
+            }
+            else {
+                Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $state"
+            }
+        }
+        foreach ($job in $complete) {
+            Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $($job.State)"
+        }
+        Update-ConsoleLine -Line $timerpos -Message ("Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
+        Update-ConsoleLine -Line 10
+        Update-ConsoleLine -Line 11
+        Update-ConsoleLine -Line 12
+        Update-ConsoleLine -Line 13
+        Update-ConsoleLine -Line 14
+        Start-Sleep -Seconds 1
+    }
+    [Console]::CursorVisible = $true
     $stopwatch.Stop()
-    Write-Host "Script execution time: $($stopwatch.Elapsed)"
+    Update-ConsoleLine -Line $timerpos -Message ("Total Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
+    Update-ConsoleLine -Line ($timerpos + 1) -Message "All jobs completed successfully."
+    Update-ConsoleLine -Line ($timerpos + 2)
 }
 
 # Only run Main if not running as a job (i.e., if $env:IS_CHILD_JOB is not set)
