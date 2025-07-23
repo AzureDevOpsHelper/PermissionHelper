@@ -1,5 +1,5 @@
 
-function Get-MSALToken {
+function Get-EntraToken {
     if (Get-Module -Name Az -ListAvailable)
     {
         try
@@ -36,6 +36,14 @@ function Get-MSALToken {
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
     $AuthHeader = "Bearer $plaintoken"
     $result | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
+    return $result
+}
+function Get-GraphToken {
+    $result = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com/" #| Out-Null
+    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
+    $AuthHeader = "Bearer $plaintoken"
+    $result | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
+    #$result | Format-List
     return $result
 }
 function Update-ConsoleLine {
@@ -84,13 +92,19 @@ function GET-AzureDevOpsRestAPI {
         $results.Add("results", $result)
         $results.Add("responseHeaders", $responseHeaders)
         $results.Add("statusCode", $statusCode)
-        if (($null -ne $responseHeaders."Retry-After") -and ($responseHeaders."Retry-After" -gt 0)){
+        if (($statusCode -eq 429) -or (($null -ne $responseHeaders."Retry-After") -and ($responseHeaders."Retry-After" -gt 0))){
             $RetryAfter = 30.0
             [double]::TryParse($responseHeaders."Retry-After", [ref]$RetryAfter)
             Update-ConsoleLine -Line 15 -Message "$RestAPIURL returned: "
             Update-ConsoleLine -Line 16 -Message "X-RateLimit-Remaining: $RetryAfter)"
             Update-ConsoleLine -Line 17 -Message "Sleeping for $RetryAfter seconds to avoid throttling."
-            Start-Sleep -Seconds $RetryAfter
+            "URL       : $RestAPIURL" | Out-File -FilePath ".\data\Errors.json" -Force
+            "statusCode: $statusCode" | Out-File -FilePath ".\data\Errors.json" -Append -Force
+            "Headers   : `r`n$($responseHeaders | ConvertTo-Json -Depth 100)`r`n" | Out-File -FilePath ".\data\Errors.json" -Append -Force
+            "$RestAPIURL returned: " | Out-File -FilePath ".\data\Errors.json" -Force
+            "X-RateLimit-Remaining: $RetryAfter)" | Out-File -FilePath ".\data\Errors.json" -Append -Force
+            "Sleeping for $RetryAfter seconds to avoid throttling." | Out-File -FilePath ".\data\Errors.json" -Append -Force
+            Start-Sleep -Seconds $RetryAfter            
         }
         $WarningPreference = $WP
         $ProgressPreference = $PP
@@ -100,11 +114,14 @@ function GET-AzureDevOpsRestAPI {
         return $results
     }
     Catch {
-        Update-ConsoleLine -Line 18 "ERROR:" +
-        Update-ConsoleLine -Line 19 "RestAPIUrl: $RestAPIUrl"
-        Update-ConsoleLine -Line 20 "StatusCode: $($_.Exception.Response.StatusCode.value__)"
-        Update-ConsoleLine -Line 21 "ErrorDescription: $($_)"
-        Update-ConsoleLine -Line 22 "at line $($_.InvocationInfo.ScriptLineNumber)"
+        Update-ConsoleLine -Line 20 "ERROR:" +
+        Update-ConsoleLine -Line 21 "RestAPIUrl: $RestAPIUrl"
+        Update-ConsoleLine -Line 22 "StatusCode: $($_.Exception.Response.StatusCode.value__)"
+        Update-ConsoleLine -Line 23 "ErrorDescription: $($_)"
+        Update-ConsoleLine -Line 24 "at line $($_.InvocationInfo.ScriptLineNumber)"
+        "URL       : $RestAPIURL" | Out-File -FilePath ".\data\Errors.json" -Force
+        "statusCode: $statusCode" | Out-File -FilePath ".\data\Errors.json" -Append -Force
+        "Headers   : $($responseHeaders | ConvertTo-Json -Depth 100)" | Out-File -FilePath ".\data\Errors.json" -Append -Forc
         break
     }
 }
@@ -122,21 +139,11 @@ function Get-AzureDevOpsPermissions {
         $permissionUrl = $orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
         $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
         $i +=  $permissionResult.results.Count
-        Update-ConsoleLine -Line 8 -Message "Aces Total: $i working on NamespaceId: $($namespace.namespaceId)"
-        $queue += $permissionResult.results.value           
-    }
-    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
-    Update-ConsoleLine -Line 8
-}
-function Process-Permissions {
-    param (
-        [string]$Authheader,
-        [string]$orgUrl
-    )
-    $queue = @()
-    $permissionResult = Get-Content -Path ".\data\Permissions.json" | ConvertFrom-Json
-    foreach ($permission in $permissionResult)
+        Update-ConsoleLine -Line 13 -Message "Aces Total: $i working on NamespaceId: $($namespace.name)/$($namespace.displayName)"
+        #$queue += $permissionResult.results.value
+        foreach ($permission in $permissionResult.results.value)
         {
+            #((($permission.acesDictionary).psobject.Properties).Value)
             foreach ($descriptor in ((($permission.acesDictionary).psobject.Properties).Value))
             {  
                 $_descriptor = $descriptor.descriptor
@@ -144,63 +151,249 @@ function Process-Permissions {
                 $denyNullSafe                 = ($null -eq $permission.acesDictionary."$_descriptor".deny) ? 0 : $permission.acesDictionary."$_descriptor".deny
                 $effectiveAllowNullSafe       = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow
                 $effectiveDenyNullSafe        = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny
-                $tokenNullSafe   = ($null -eq $permission.token) ? "" : $permission.token
-                $enumactions  = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
-                foreach ( $action in $namespace.actions )
+                if ($effectiveAllowNullSafe -gt 0 -or $effectiveDenyNullSafe -gt 0 -or $allowNullSafe -gt 0 -or $denyNullSafe -gt 0)
                 {
-                    if (( $allowNullSafe -band $action.bit ) -eq $action.bit ) 
+                    $tokenNullSafe   = ($null -eq $permission.token) ? "" : $permission.token
+                    $enumactions  = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                    foreach ( $action in $namespace.actions )
                     {
-                        $enumactions.Add($action.displayName, "Allow")
+                        if (( $allowNullSafe -band $action.bit ) -eq $action.bit ) 
+                        {
+                            $enumactions.Add($action.displayName, "Allow")
+                        }
+                        elseif (( $effectiveAllowNullSafe -band $action.bit ) -eq $action.bit )
+                        {
+                            $enumactions.Add($action.displayName, "Inherited Allow")
+                        }
+                        elseif (( $effectiveDenyNullSafe -band $action.bit ) -eq $action.bit )
+                        {
+                            $enumactions.Add($action.displayName, "Inherited Deny")
+                        }
+                        elseif (( $denyNullSafe -band $action.bit ) -eq $action.bit )
+                        {
+                            $enumactions.Add($action.displayName, "Deny")
+                        }
+                        else
+                        {
+                            $enumactions.Add($action.displayName, "Not Set")
+                        }
+                    }  
+                    $friendlyToken = $tokenNullSafe
+                    $permissionitem = [pscustomobject]@{
+                        namespaceId          = $namespace.namespaceId
+                        namespaceName        = $namespace.name
+                        namespacedisplayName = $namespace.displayName
+                        inheritPermissions   = ($null -eq $permission.inheritPermissions) ? $false : $permission.inheritPermissions
+                        token                = $tokenNullSafe
+                        friendlyToken        = $friendlyToken
+                        descriptor           = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
+                        friendlydescriptor   = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
+                        allow                = $allowNullSafe
+                        deny                 = $denyNullSafe
+                        effectiveAllow       = $effectiveAllowNullSafe
+                        effectiveDeny        = $effectiveDenyNullSafe
+                        enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
                     }
-                    elseif (( $effectiveAllowNullSafe -band $action.bit ) -eq $action.bit )
-                    {
-                        $enumactions.Add($action.displayName, "Inherited Allow")
-                    }
-                    elseif (( $effectiveDenyNullSafe -band $action.bit ) -eq $action.bit )
-                    {
-                        $enumactions.Add($action.displayName, "Inherited Deny")
-                    }
-                    elseif (( $denyNullSafe -band $action.bit ) -eq $action.bit )
-                    {
-                        $enumactions.Add($action.displayName, "Deny")
-                    }
-                    else
-                    {
-                        $enumactions.Add($action.displayName, "Not Set")
-                    }
-                }  
-                $friendlyToken = $tokenNullSafe
-                $permissionitem = [pscustomobject]@{
-                    namespaceId          = $namespace.namespaceId
-                    namespaceName        = $namespace.name
-                    namespacedisplayName = $namespace.displayName
-                    inheritPermissions   = ($null -eq $permission.inheritPermissions) ? $false : $permission.inheritPermissions
-                    token                = $tokenNullSafe
-                    friendlyToken        = $friendlyToken
-                    descriptor           = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
-                    allow                = $allowNullSafe
-                    deny                 = $denyNullSafe
-                    effectiveAllow       = $effectiveAllowNullSafe
-                    effectiveDeny        = $effectiveDenyNullSafe
-                    enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
-                } 
-
-                if ($permissionitem.allow -gt 0 -or $permissionitem.deny -gt 0 -or $permissionitem.effectiveAllow -gt 0 -or $permissionitem.effectiveDeny -gt 0)
-                {
                     $queue += $permissionitem
-                }
+                }                
             }
         }
-    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\ProcessedPermissions.json" -Force
+    }
+    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
+    Update-ConsoleLine -Line 13
+    $permissionResult = $null
+    $queue = $null
+}
+#todo: Lookup:
+# AnalyticsViews, 
+# ServiceEndpoints, 
+# Plan, 
+# Process, 
+# CSS, 
+# TeamLabSecurity, 
+# Iteration, 
+# Workspaces (seems like this is associated with VS Profile), 
+# DashboardsPrivileges
+
+function Convert-Permissions {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    try
+    {
+        $groupfile = Get-Item -Path ".\data\Groups.json"
+        $groups = Get-Content -Path $groupfile.FullName -Raw
+        $groups = $groups | ConvertFrom-Json | Select-Object -Property SID, principalName, originId #, domain
+#        $accountID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") } | Select-Object -First 1 -Property domain).domain
+#        $accountID = $accountID.TrimStart('vstfs:///Framework/IdentityDomain/')
+        $projfile = Get-Item -Path ".\data\Projects.json"
+        $projects = Get-Content -Path $projfile.FullName -Raw
+        $projects = ($projects | ConvertFrom-Json) | Select-Object -Property id, name
+        $identfile = Get-Item -Path ".\data\Identities.json"
+        $identities = Get-Content -Path $identfile.FullName -Raw
+        $identities = $identities | ConvertFrom-Json <#| Where-Object {($_.descriptor).Contains("ServiceIdentity")  }#> | Select-Object -Property descriptor, customDisplayName, providerDisplayName
+        $repositoryfile = Get-Item -Path ".\data\Repositories.json"
+        $repos = Get-Content -Path $repositoryfile.FullName -Raw
+        $repos = ($repos | ConvertFrom-Json).value | Select-Object -Property id, name
+        $queryfile = Get-Item -Path ".\data\Queries.json"
+        $queries = Get-Content -Path $queryfile.FullName -Raw
+        $queries = ($queries | ConvertFrom-Json) | Select-Object -Property id, name
+        $reader = [System.IO.File]::OpenText(".\data\Permissions.json")
+        Remove-Item -Path ".\data\Permissions_Readable.json" -Force -ErrorAction SilentlyContinue
+        $writer = New-Object System.IO.StreamWriter(".\data\Permissions_Readable.json", $false, [System.Text.Encoding]::UTF8)
+        while($null -ne ($line = $reader.ReadLine())) {
+            if ($line.Contains("`"friendlydescriptor`":"))
+            {
+                if ($line.Contains("S-")) 
+                {
+                    $newline = $line
+                    $newline = $newline.Split(";") 
+                    $groupSID = $newline[1].TrimEnd("`",")
+                    $groupName = ($groups | Where-Object { $_.SID -eq $groupSID } | Select-Object -First 1 -Property principalName).principalName
+                    if ($null -ne  $groupName)
+                    {
+                        $line = ("    `"friendlydescriptor`": `"$groupName`",").Replace("\","\\")
+                    }
+                    else {
+                        #it seems like sometimes the SID a group has is not the same as the one in permissions (mostly for PCA group)
+                        $grpUrl = "$($orgUrl)/_apis/identities?descriptors=Microsoft.TeamFoundation.Identity;$groupSID&api-version=7.2-preview.1"
+                        $grpUrl = $grpUrl.Replace("dev.azure.com", "vssps.dev.azure.com")
+                        $Result =  GET-AzureDevOpsRestAPI -RestAPIUrl $grpUrl -Authheader $Authheader
+                        if ($null -ne $Result.results.value.descriptor)
+                        {
+                            $Result = $Result.results.value
+                            $grp = @{
+                                SID           = $groupSID
+                                principalName = $Result.providerDisplayName
+                            }
+                            $line = ("    `"friendlydescriptor`": `"$($grp.principalName)`",").Replace("\","\\")
+                            $groups += $grp
+                        }
+                    }
+                }
+                elseif (($line.Contains("ServiceIdentity")))
+                {
+                    $newline1 = $line
+                    $svcAcc = $newline1.TrimStart("    `"friendlydescriptor`": `"").TrimEnd("`",")
+                    $id = $identities | Where-Object { $_.descriptor -eq $svcAcc } | Select-Object -First 1
+                    if ($null -ne  $id)
+                    {
+                        $identityName = ($null -eq $id.customDisplayName) ? $id.principalName : $id.customDisplayName
+                        $line = "    `"friendlydescriptor`": `"$identityName`","
+                    }
+                } 
+                elseif (($line.Contains("ServicePrincipal")))
+                {
+                    #I suspect that the service principal lookup needs to go here but there might be ACES for removed SP
+                    $line = "    `"friendlydescriptor`": `"Service Principal lookup not yet implemented`","
+                }
+                elseif (($line.Contains("@")))
+                {
+                    $newline = $line
+                    $newline = $newline.Split("\\") 
+                    $UPN = $newline[1].TrimEnd("`",")
+                    $line = "    `"friendlydescriptor`": `"$UPN`","
+                }
+            }
+            elseif ($line.Contains("`"friendlyToken`":"))
+            {
+                $regex = [regex]'\b[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}\b'
+                $matches = $regex.Matches($line)
+                foreach ($match in $matches)
+                {
+                    $projectname = ($projects | Where-Object { $_.id -eq $match } | Select-Object -Property name).name 
+                    if ($null -ne  $projectname)
+                    {
+                        $line = $line.Replace($match.Value,$projectname)
+                    }
+                    $groupName = ($groups | Where-Object { $_.originId -eq $match } | Select-Object -First 1 -Property principalName).principalName
+                    if ($null -ne  $groupName)
+                    {
+                        $line = $line.Replace($match.Value,$groupName.Replace("\","\\"))
+                    }
+                    $repositoryName = ($repos | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
+                    if ($null -ne  $repositoryName)
+                    {
+                        $line = $line.Replace($match.Value,$repositoryName)
+                        if ($line.Contains("/refs/heads/"))
+                        {   
+                            $tokenNullSafe = $line.TrimStart("    `"friendlyToken`": `"").TrimEnd("`",")
+                            for ($i = 5 ; $i -lt ($tokenNullSafe -split '/').Count ; $i = $i + 1) 
+                            {
+                                $asciiChars = (($tokenNullSafe -split '/')[$i]) -split "00" 
+                                $charstring = ''
+                                ForEach ($char in  $asciiChars)
+                                {
+                                    if ($char -ne '')
+                                    {
+                                        $charstring = $charstring + [char][byte]"0x$char" 
+                                    }
+                                }
+                                $line = $line.Replace((($tokenNullSafe -split '/')[$i]), $charstring)
+                            }
+                        }
+                    }
+                    $queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
+                    if ($null -ne  $queryName)
+                    {
+                        $line = $line.Replace($match.Value,$queryName)
+                    }
+                }
+            }
+            $writer.WriteLine($line)
+        }
+    }
+    catch
+    {
+        Update-ConsoleLine -Line 18 "ERROR:" +
+        Update-ConsoleLine -Line 21 "ErrorDescription: $($_)"
+        Update-ConsoleLine -Line 22 "at line $($_.InvocationInfo.ScriptLineNumber)"
+    }
+    finally
+    {
+        $reader.Close()
+        $writer.Close()
+        $groups = $null
+        $projects = $null
+        $identities = $null
+        $queries = $null
+    }
 }
 function Get-AzureDevOpsProjects {
     param (
         [string]$Authheader,
         [string]$orgUrl
     )
-    $projectsurl = $orgUrl + "/_apis/projects?stateFilter=All&api-version=2.2"
-    $projectResult =  GET-AzureDevOpsRestAPI -RestAPIUrl $projectsurl -Authheader $Authheader
-    $projectResult.results | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Projects.json" -Force
+    try
+    {
+        $projectsurl = $orgUrl + "/_apis/projects?stateFilter=All&api-version=2.2"
+        $projectResult =  GET-AzureDevOpsRestAPI -RestAPIUrl $projectsurl -Authheader $Authheader
+        $graphToken =  Get-GraphToken #| Out-Null
+        $Graphapiurl = "https://graph.microsoft.com/v1.0/organization/$($graphToken.TenantId)?`$select=Id,displayName"
+        $domainResult =  GET-AzureDevOpsRestAPI -RestAPIUrl $Graphapiurl -Authheader $graphToken.AuthHeader
+        $domainasproj = @{
+        id             = $domainResult.results.id
+        name           = $domainResult.results.displayName
+        url            = $Graphapiurl
+        state          = "Domain"
+        revision       = 1
+        visibility     = "Tenant"
+        lastUpdateTime = [datetime]::MinValue
+        }
+        $projects = $projectResult.results.value
+        $projects += $domainasproj
+        $projects | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Projects.json" -Force
+        $projects = $null
+        $projectResult = $null
+        $domainResult = $null
+    }
+    Catch {
+        Update-ConsoleLine -Line 18 "ERROR:" +
+        Update-ConsoleLine -Line 19 "ErrorDescription: $($_)"
+        Update-ConsoleLine -Line 20 "at line $($_.InvocationInfo.ScriptLineNumber)"
+        throw $_
+    }
 }
 function Get-AzureDevOpsGroups {
     param (
@@ -222,18 +415,12 @@ function Get-AzureDevOpsGroups {
         }
         $Result =  GET-AzureDevOpsRestAPI -RestAPIUrl $groupInfourl -Authheader $Authheader
         $allGroups += $Result.results.value
-        #$Result.results.value | ForEach-Object {
-        #    $group = $_
-        #    $allGroups += $group
-        #}
     }
     While  ($null -ne $Result.responseHeaders."x-ms-continuationtoken")
     foreach ($group in $allGroups)
     {
-        #Write-Host $group.descriptor
         $descriptor = ($group.descriptor).Split(".")
         $crumb = $descriptor[1]
-        #Write-Host $crumb
         switch ($crumb.Length % 4) {
             2 { $crumb += '==' }
             3 { $crumb += '=' }
@@ -242,6 +429,7 @@ function Get-AzureDevOpsGroups {
         $group | Add-Member -NotePropertyName 'SID' -NotePropertyValue $decode.ToString()
     }
     $allGroups | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Groups.json" -Force
+    $allGroups = $null
 }
 function Get-AzureDevOpsRepositories {
     param (
@@ -251,6 +439,39 @@ function Get-AzureDevOpsRepositories {
     $reposUrl = "$($orgUrl)/_apis/git/repositories?api-version=7.2-preview.1"
     $reposResult = GET-AzureDevOpsRestAPI -RestAPIUrl $reposUrl -Authheader $Authheader
     $reposResult.results | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Repositories.json" -Force
+    $reposResult = $null
+}
+function Get-AzureDevOpsQueries {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    try
+    {
+        $projfile = Get-Item -Path ".\data\Projects.json"
+        $projects = Get-Content -Path $projfile.FullName -Raw
+        $projects = $projects | ConvertFrom-Json | Where-Object { $_.state -ne "Domain" } | Select-Object -Property id, name
+        $queries = @()
+        foreach ($project in $projects)
+        {
+            $queriesUrl = "$($orgUrl)/$($project.name)/_apis/wit/queries?depth=100&api-version=7.2-preview.2"
+            $queryResult = GET-AzureDevOpsRestAPI -RestAPIUrl $queriesUrl -Authheader $Authheader
+            if ($null -ne $queryResult.results.value) 
+            {
+                $queries += $queryResult.results.value
+            }
+        }
+        $queries | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Queries.json" -Force
+        $queryResult = $null
+        $queries = $null
+        $projects = $null
+    }
+    Catch {
+        Update-ConsoleLine -Line 22 "ERROR:" +
+        Update-ConsoleLine -Line 23 "ErrorDescription: $($_)"
+        Update-ConsoleLine -Line 24 "at line $($_.InvocationInfo.ScriptLineNumber)"
+        throw $_
+    }
 }
 function Get-AzureDevOpsUsers {
     param (
@@ -270,13 +491,13 @@ function Get-AzureDevOpsUsers {
             $usersUrl = "$($orgUrl)/_apis/graph/users?continuationToken=$($Result.responseHeaders."x-ms-continuationtoken")&api-version=7.2-preview.1"
         }
         $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $usersUrl -Authheader $Authheader
-        Update-ConsoleLine -Line 9 -Message "Users Total: $($allUsers.Count)"
+        Update-ConsoleLine -Line 12 -Message "Users Total: $($allUsers.Count)"
         $allUsers += $Result.results.value
         
     }
     While ($null -ne $Result.responseHeaders."x-ms-continuationtoken")
 
-    Update-ConsoleLine -Line 9 -Message "Saving Users to file"
+    Update-ConsoleLine -Line 12 -Message "Saving Users to file"
     $allUsers | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Users.json" -Force
     $descriptors = $allUsers | Select-Object -ExpandProperty descriptor
     $allUsers = $null
@@ -286,18 +507,29 @@ function Get-AzureDevOpsUsers {
         $descriptorString = $batch -join ','
         $identityUrl = "$($orgUrl)/_apis/identities?subjectDescriptors=$descriptorString&queryMembership=Direct&api-version=7.2-preview.1"
         $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $identityUrl -Authheader $Authheader
-        Update-ConsoleLine -Line 9 -Message "Users Total: $i of $($descriptors.Count)" 
+        Update-ConsoleLine -Line 12 -Message "Users Total: $i of $($descriptors.Count)" 
         $queue += $permissionResult.results.value 
         $allIdentities += $Result.results.value
     }
-    $allIdentities | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Identites.json" -Force
-    Update-ConsoleLine -Line 9
+    $allIdentities | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Identities.json" -Force
+    Update-ConsoleLine -Line 12
+    $descriptors = $null
+    $Result = $null
+    $allIdentities = $null
 }
 function Main {
+    Remove-Item -Path ".\data\Permissions.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Permissions_Readable.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Groups.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Projects.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Repositories.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Queries.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Users.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Identities.json" -Force -ErrorAction SilentlyContinue
     Write-Host "Please enter your Org Name"
     $orgName = Read-Host
     $orgUrl = "https://dev.azure.com/$orgname"
-    $token = Get-MSALToken
+    $token = Get-EntraToken
     $Authheader = $token.AuthHeader
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $scriptPath = $MyInvocation.MyCommand.Path
@@ -305,37 +537,52 @@ function Main {
         $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
     }
     $jobSpecs = @(
-        @{ Name = "GetPermissionsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsPermissions -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Streaming = $Host },
-        @{ Name = "GetProjectsJob";    Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath) },
-        @{ Name = "GetGroupsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath) },
-        @{ Name = "GetUsersJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Streaming = $Host }
+        @{ Name = "GetPermissionsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsPermissions  -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
+        @{ Name = "GetProjectsJob";    Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects     -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host  },
+        @{ Name = "GetGroupsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups       -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0 },
+        @{ Name = "GetUsersJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers        -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
+        @{ Name = "GetReposJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsRepositories -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0 },
+        @{ Name = "GetQueriesJob";     Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries      -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; Streaming = $Host }
     )
     $jobs = @()
     foreach ($spec in $jobSpecs) {
-        if ($spec.Streaming) {
-            $jobs += Start-ThreadJob -ScriptBlock $spec.Script -ArgumentList $spec.Args -Name $spec.Name -StreamingHost $spec.Streaming
-        } else {
-            $jobs += Start-ThreadJob -ScriptBlock $spec.Script -ArgumentList $spec.Args -Name $spec.Name
+        if ($spec.Order -eq 0)
+        {
+            if ($spec.Streaming) {
+                $jobs += Start-ThreadJob -ScriptBlock $spec.Script -ArgumentList $spec.Args -Name $spec.Name -StreamingHost $spec.Streaming
+            } else {
+                $jobs += Start-ThreadJob -ScriptBlock $spec.Script -ArgumentList $spec.Args -Name $spec.Name
+            }
         }
     }
     clear-host
     [Console]::CursorVisible = $false
-    $timerpos = $jobs.Count + 1
-    while ($jobs.Count -gt 0) {
-        $complete = @()
+    $complete = @()
+    while ($jobs.Count -gt 0) 
+    {
+        $timerpos = $jobs.Count + $complete.Count + 1
         foreach ($job in $jobs) {
             $state = $job.State
+            $Name = $job.Name
+            $Id = $job.Id
             if ($state -eq "Completed") {
                 Receive-Job -Job $job *>$null
                 Remove-Job -Job $job -Force -ErrorAction SilentlyContinue *>$null
-                $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }
                 $done = [pscustomobject]@{
-                    id = $job.Id
-                    Name = $job.Name
+                    id = $Id
+                    Name = $Name
                     State = $state
                 }
+                Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $($job.State)"
+                if (($Name -eq "GetProjectsJob") -and ($null -eq ($jobs | Where-Object { $_.Name -eq "GetQueriesJob" } )) )
+                {
+                    $next = $jobSpecs | Where-Object { $_.name -eq "GetQueriesJob" }
+                    $jobs += Start-ThreadJob -ScriptBlock $next.Script -ArgumentList $next.Args -Name $next.Name -StreamingHost $spec.Streaming
+                    $newid = $jobs | Where-Object { $_.Name -eq "GetQueriesJob" }
+                    Update-ConsoleLine -Line $newid.Id -Message "$($newid.Name): $($newid.State)"
+                }
                 $complete += $done
-                Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $state"
+                $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }
             }
             elseif ($state -eq "Failed"){
                 Update-ConsoleLine -Line $job.Id "$($job.Name): $state"
@@ -348,25 +595,30 @@ function Main {
                 Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $state"
             }
         }
-        foreach ($job in $complete) {
-            Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $($job.State)"
+        foreach ($done in $complete) {
+            Update-ConsoleLine -Line $done.Id -Message "$($done.Name): $($done.State)"
         }
         Update-ConsoleLine -Line $timerpos -Message ("Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
-        Update-ConsoleLine -Line 10
-        Update-ConsoleLine -Line 11
-        Update-ConsoleLine -Line 12
-        Update-ConsoleLine -Line 13
-        Update-ConsoleLine -Line 14
-        Start-Sleep -Seconds 1
+        for($inc = 1; $inc -le 6; $inc++) {
+            Update-ConsoleLine -Line ($timerpos + $inc)
+        }
+        Start-Sleep -Seconds 2
     }
-    [Console]::CursorVisible = $true
+    Update-ConsoleLine -line 1 -Message "Performing Post Processing to give friendly tokens and descriptors..."
+        for($inc = 2; $inc -le 5; $inc++) {
+            Update-ConsoleLine -Line ($inc)
+        }
+        for($inc = 14; $inc -le 3; $inc++) {
+            Update-ConsoleLine -Line ($inc)
+        }
+    Convert-Permissions -Authheader $Authheader -orgUrl $orgUrl
     $stopwatch.Stop()
-    Update-ConsoleLine -Line $timerpos -Message ("Total Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
-    Update-ConsoleLine -Line ($timerpos + 1) -Message "All jobs completed successfully."
-    Update-ConsoleLine -Line ($timerpos + 2)
+    [Console]::CursorVisible = $true
+    Update-ConsoleLine -Line 3 -Message ("Total Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
+    Update-ConsoleLine -Line 4 -Message "All jobs completed successfully."
+    Update-ConsoleLine -Line 5
 }
 
-# Only run Main if not running as a job (i.e., if $env:IS_CHILD_JOB is not set)
 if (-not $env:IS_CHILD_JOB) {
     Main
 }
