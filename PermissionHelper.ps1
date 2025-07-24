@@ -34,7 +34,7 @@ function Get-EntraToken {
         Clear-Host
     }
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
-    $AuthHeader = "Bearer $plaintoken"
+    $AuthHeader = "Bearer $plainToken"
     $result | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
     return $result
 }
@@ -95,15 +95,16 @@ function GET-AzureDevOpsRestAPI {
         if (($statusCode -eq 429) -or (($null -ne $responseHeaders."Retry-After") -and ($responseHeaders."Retry-After" -gt 0))){
             $RetryAfter = 30.0
             [double]::TryParse($responseHeaders."Retry-After", [ref]$RetryAfter)
-            Update-ConsoleLine -Line 15 -Message "$RestAPIURL returned: "
-            Update-ConsoleLine -Line 16 -Message "X-RateLimit-Remaining: $RetryAfter)"
+            Update-ConsoleLine -Line 16 -Message "$RestAPIURL"
             Update-ConsoleLine -Line 17 -Message "Sleeping for $RetryAfter seconds to avoid throttling."
+
             "URL       : $RestAPIURL" | Out-File -FilePath ".\data\Errors.json" -Force
             "statusCode: $statusCode" | Out-File -FilePath ".\data\Errors.json" -Append -Force
-            "Headers   : `r`n$($responseHeaders | ConvertTo-Json -Depth 100)`r`n" | Out-File -FilePath ".\data\Errors.json" -Append -Force
-            "$RestAPIURL returned: " | Out-File -FilePath ".\data\Errors.json" -Force
+            $($responseHeaders | ConvertTo-Json -Depth 100) | Out-File -FilePath ".\data\Errors.json" -Append -Force
+            "$RestAPIURL returned: " | Out-File -FilePath ".\data\Errors.json" -Append -Force
             "X-RateLimit-Remaining: $RetryAfter)" | Out-File -FilePath ".\data\Errors.json" -Append -Force
             "Sleeping for $RetryAfter seconds to avoid throttling." | Out-File -FilePath ".\data\Errors.json" -Append -Force
+            Get-Date | Out-File -FilePath ".\data\Errors.json" -Append -Force
             Start-Sleep -Seconds $RetryAfter            
         }
         $WarningPreference = $WP
@@ -132,14 +133,21 @@ function Get-AzureDevOpsPermissions {
     )
     $namespaceUrl = "$($orgUrl)/_apis/securitynamespaces?api-version=7.2-preview.1"
     $namespaces = GET-AzureDevOpsRestAPI -RestAPIUrl $namespaceUrl -Authheader $Authheader
-    $queue = @()
-    $i = 0
-    $namespaces.results.value | ForEach-Object {
+    $threadSafeallPermissions = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+    $namespaces.results.value | Foreach-Object -ThrottleLimit 5 -Parallel {
         $namespace        = $_
-        $permissionUrl = $orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
+        $Authheader       = $using:Authheader
+        $_queue           = $using:threadSafeallPermissions
+        $_orgUrl          = $using:orgUrl
+        $scriptPath = $MyInvocation.MyCommand.Path
+        if (-not $scriptPath) {
+        $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
+    }
+        $env:IS_CHILD_JOB = $true 
+        . "$scriptPath"
+        $permissionUrl = $_orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
         $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
-        $i +=  $permissionResult.results.Count
-        Update-ConsoleLine -Line 13 -Message "Aces Total: $i working on NamespaceId: $($namespace.name)/$($namespace.displayName)"
+        Update-ConsoleLine -Line 13 -Message "Working on NamespaceId: $($namespace.name)/$($namespace.displayName) ($($namespace.namespaceId))"
         #$queue += $permissionResult.results.value
         foreach ($permission in $permissionResult.results.value)
         {
@@ -194,15 +202,14 @@ function Get-AzureDevOpsPermissions {
                         effectiveDeny        = $effectiveDenyNullSafe
                         enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
                     }
-                    $queue += $permissionitem
-                }                
+                    $_queue.Enqueue($permissionitem)
+                }               
             }
         }
     }
-    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
+    $threadSafeallPermissions | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Permissions.json" -Force
     Update-ConsoleLine -Line 13
-    $permissionResult = $null
-    $queue = $null
+    $threadSafeallPermissions = $null
 }
 #todo: Lookup:
 # AnalyticsViews, 
@@ -222,6 +229,7 @@ function Convert-Permissions {
     )
     try
     {
+        $count = 0
         $groupfile = Get-Item -Path ".\data\Groups.json"
         $groups = Get-Content -Path $groupfile.FullName -Raw
         $groups = $groups | ConvertFrom-Json | Select-Object -Property SID, principalName, originId #, domain
@@ -342,6 +350,11 @@ function Convert-Permissions {
                 }
             }
             $writer.WriteLine($line)
+            $count++
+            if ($count % 5000 -eq 0)
+            {
+                Update-ConsoleLine -Line 2 -Message "Processed $count lines so far..."
+            }
         }
     }
     catch
@@ -478,7 +491,7 @@ function Get-AzureDevOpsUsers {
         [string]$Authheader,
         [string]$orgUrl
     )
-    $allIdentities = @()
+    #$allIdentities = @()
     $allUsers = @()
     $orgUrl = $orgUrl.Replace("dev.azure.com", "vssps.dev.azure.com")
     $Result = $null
@@ -501,21 +514,49 @@ function Get-AzureDevOpsUsers {
     $allUsers | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Users.json" -Force
     $descriptors = $allUsers | Select-Object -ExpandProperty descriptor
     $allUsers = $null
-    #this works but is inefficent, might want to add parallel processing later
-    for ($i = 0; $i -lt $descriptors.Count; $i += 60) {
-        $batch = $descriptors[$i..([math]::Min($i+59, $descriptors.Count-1))]
+    $identityUrls = @()
+    Update-ConsoleLine -Line 12 -Message "Batching descriptors in groups of 50 for API calls"
+    for ($i = 0; $i -lt $descriptors.Count; $i += 50) {
+        $batch = $descriptors[$i..([math]::Min($i+49, $descriptors.Count-1))]
         $descriptorString = $batch -join ','
         $identityUrl = "$($orgUrl)/_apis/identities?subjectDescriptors=$descriptorString&queryMembership=Direct&api-version=7.2-preview.1"
-        $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $identityUrl -Authheader $Authheader
-        Update-ConsoleLine -Line 12 -Message "Users Total: $i of $($descriptors.Count)" 
-        $queue += $permissionResult.results.value 
-        $allIdentities += $Result.results.value
+        $identityUrls += $identityUrl
     }
-    $allIdentities | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Identities.json" -Force
+    $total = $descriptors.Count
+    $processedItems = [hashtable]::Synchronized(@{
+        Lock    = [System.Threading.Mutex]::new()
+        Counter = 0
+    })
+    $queue = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+    $identityUrls | Foreach-Object -ThrottleLimit 5 -Parallel {
+        $identityUrl = $_
+        $_Authheader = $using:Authheader
+        $_queue = $using:queue
+        $_total = $using:total
+        $ref = $using:processedItems
+        $scriptPath = $MyInvocation.MyCommand.Path
+        if (-not $scriptPath) {
+        $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
+        }
+        $env:IS_CHILD_JOB = $true 
+        . "$scriptPath"
+        $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $identityUrl -Authheader $_Authheader
+        if ($ref['Lock'].WaitOne()) 
+        {
+            $ref['Counter'] += $Result.results.Count
+            $ref['Lock'].ReleaseMutex()
+        }
+        if ($ref['Counter'] % 5000 -eq 0)
+        {
+            Update-ConsoleLine -Line 12 -Message "Users Total: $($ref['Counter']) of $_total" 
+        }
+        $_queue.Enqueue($Result.results.value)
+    }
+    $queue | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Identities.json" -Force
     Update-ConsoleLine -Line 12
     $descriptors = $null
     $Result = $null
-    $allIdentities = $null
+    $queue = $null
 }
 function Main {
     Remove-Item -Path ".\data\Permissions.json" -Force -ErrorAction SilentlyContinue
@@ -526,6 +567,7 @@ function Main {
     Remove-Item -Path ".\data\Queries.json" -Force -ErrorAction SilentlyContinue
     Remove-Item -Path ".\data\Users.json" -Force -ErrorAction SilentlyContinue
     Remove-Item -Path ".\data\Identities.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path ".\data\Errors.json" -Force -ErrorAction SilentlyContinue
     Write-Host "Please enter your Org Name"
     $orgName = Read-Host
     $orgUrl = "https://dev.azure.com/$orgname"
@@ -599,21 +641,19 @@ function Main {
             Update-ConsoleLine -Line $done.Id -Message "$($done.Name): $($done.State)"
         }
         Update-ConsoleLine -Line $timerpos -Message ("Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
-        for($inc = 1; $inc -le 6; $inc++) {
+        for($inc = 1; $inc -le 5; $inc++) {
             Update-ConsoleLine -Line ($timerpos + $inc)
         }
         Start-Sleep -Seconds 2
     }
     Update-ConsoleLine -line 1 -Message "Performing Post Processing to give friendly tokens and descriptors..."
-        for($inc = 2; $inc -le 5; $inc++) {
-            Update-ConsoleLine -Line ($inc)
-        }
-        for($inc = 14; $inc -le 3; $inc++) {
+        for($inc = 2; $inc -le 15; $inc++) {
             Update-ConsoleLine -Line ($inc)
         }
     Convert-Permissions -Authheader $Authheader -orgUrl $orgUrl
     $stopwatch.Stop()
     [Console]::CursorVisible = $true
+    Update-ConsoleLine -Line 13    
     Update-ConsoleLine -Line 3 -Message ("Total Execution time: {0:mm\:ss}" -f $stopwatch.Elapsed)
     Update-ConsoleLine -Line 4 -Message "All jobs completed successfully."
     Update-ConsoleLine -Line 5
