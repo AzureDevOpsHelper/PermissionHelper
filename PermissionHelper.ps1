@@ -125,96 +125,132 @@ function Get-AzureDevOpsPermissions {
         [string]$orgUrl
     )
     try 
-    {    
-    $namespaceUrl = "$($orgUrl)/_apis/securitynamespaces?api-version=7.2-preview.1"
-    $namespaces = GET-AzureDevOpsRestAPI -RestAPIUrl $namespaceUrl -Authheader $Authheader
-    "[" | Out-File -FilePath ".\data\Permissions.json" -Force
-    $processedItems = [hashtable]::Synchronized(@{
-        Lock    = [System.Threading.Mutex]::new()
-        File    = ".\data\Permissions.json"
-    })
-    $namespaces.results.value | Foreach-Object -ThrottleLimit 5 -Parallel {
-        $namespace        = $_
-        $Authheader       = $using:Authheader
-        $_orgUrl          = $using:orgUrl
-        $ref              = $using:processedItems
-        $scriptPath = $MyInvocation.MyCommand.Path
-        $queue = @()
-        if (-not $scriptPath) {
-        $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
-        }
-        $env:IS_CHILD_JOB = $true 
-        . "$scriptPath"
-        $permissionUrl = $_orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
-        $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
-        Update-ConsoleLine -Line 13 -Message "Working on NamespaceId: $($namespace.name)/$($namespace.displayName) ($($namespace.namespaceId))"
-        foreach ($permission in $permissionResult.results.value)
-        {   
-            foreach ($descriptor in ((($permission.acesDictionary).psobject.Properties).Value))
-            {  
-                $_descriptor = $descriptor.descriptor
-                $allowNullSafe                = ($null -eq $permission.acesDictionary."$_descriptor".allow) ? 0 : $permission.acesDictionary."$_descriptor".allow
-                $denyNullSafe                 = ($null -eq $permission.acesDictionary."$_descriptor".deny) ? 0 : $permission.acesDictionary."$_descriptor".deny
-                $effectiveAllowNullSafe       = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow
-                $effectiveDenyNullSafe        = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny
-                if ($effectiveAllowNullSafe -gt 0 -or $effectiveDenyNullSafe -gt 0 -or $allowNullSafe -gt 0 -or $denyNullSafe -gt 0)
-                {
-                    $tokenNullSafe   = ($null -eq $permission.token) ? "" : $permission.token
-                    $enumactions  = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
-                    foreach ( $action in $namespace.actions )
+    {   
+        $namespaceUrl = "$($orgUrl)/_apis/securitynamespaces?api-version=7.2-preview.1"
+        $namespaces = GET-AzureDevOpsRestAPI -RestAPIUrl $namespaceUrl -Authheader $Authheader
+        $processedItems = [hashtable]::Synchronized(@{
+            Lock    = [System.Threading.Mutex]::new()
+            File    = ".\data\Permissions.json"
+        })
+        #remove Deprecated and read-only namespaces https://learn.microsoft.com/en-us/azure/devops/organizations/security/namespace-reference?view=azure-devops#deprecated-and-read-only-namespaces
+        $activeNS = $namespaces.results.value | Where-Object {$_.Name -ne "CrossProjectWidgetView" -and `
+                                                            $_.Name -ne "DataProvider" -and `
+                                                            $_.Name -ne "Favorites" -and `
+                                                            $_.Name -ne "Graph" -and `
+                                                            $_.Name -ne "Identity2" -and `
+                                                            $_.Name -ne "IdentityPicker"-and `
+                                                            $_.Name -ne "Job" -and `
+                                                            $_.Name -ne "Location" -and `
+                                                            $_.Name -ne "ProjectAnalysisLanguageMetrics" -and `
+                                                            $_.Name -ne "Proxy" -and `
+                                                            $_.Name -ne "Publish" -and `
+                                                            $_.Name -ne "Registry" -and `
+                                                            $_.Name -ne "Security" -and `
+                                                            $_.Name -ne "ServicingOrchestration" -and `
+                                                            $_.Name -ne "SettingEntries" -and `
+                                                            $_.Name -ne "Social" -and `
+                                                            $_.Name -ne "StrongBox"-and `
+                                                            $_.Name -ne "TeamLabSecurity" -and `
+                                                            $_.Name -ne "TestManagement" -and `
+                                                            $_.Name -ne "VersionControlItems2" -and `
+                                                            $_.Name -ne "ViewActivityPaneSecurity" -and `
+                                                            $_.Name -ne "WebPlatform"-and `
+                                                            $_.Name -ne "WorkItemsHub" -and `
+                                                            $_.Name -ne "WorkItemTracking" -and `
+                                                            $_.Name -ne "WorkItemTrackingConfiguration"}
+        $activeNS = $activeNS | Sort-Object -Property name
+        $activeNS | Foreach-Object -ThrottleLimit 5 -Parallel {
+            $namespace        = $_
+            $Authheader       = $using:Authheader
+            $_orgUrl          = $using:orgUrl
+            $ref              = $using:processedItems
+            $scriptPath = $MyInvocation.MyCommand.Path
+            $queue = @()
+            if (-not $scriptPath) {
+            $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
+            }
+            $env:IS_CHILD_JOB = $true 
+            . "$scriptPath"
+            $permissionUrl = $_orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
+            $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
+            Update-ConsoleLine -Line 13 -Message "NamespaceId: $($namespace.name) - ($($namespace.namespaceId))"
+            foreach ($permission in $permissionResult.results.value)
+            {   
+                foreach ($descriptor in ((($permission.acesDictionary).psobject.Properties).Value))
+                {  
+                    $_descriptor = $descriptor.descriptor
+                    $allowNullSafe                = ($null -eq $permission.acesDictionary."$_descriptor".allow) ? 0 : $permission.acesDictionary."$_descriptor".allow
+                    $denyNullSafe                 = ($null -eq $permission.acesDictionary."$_descriptor".deny) ? 0 : $permission.acesDictionary."$_descriptor".deny
+                    $effectiveAllowNullSafe       = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveAllow
+                    $effectiveDenyNullSafe        = ($null -eq $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny) ? 0 : $permission.acesDictionary."$_descriptor".extendedInfo.effectiveDeny
+                    if ($effectiveAllowNullSafe -gt 0 -or $effectiveDenyNullSafe -gt 0 -or $allowNullSafe -gt 0 -or $denyNullSafe -gt 0)
                     {
-                        if (( $allowNullSafe -band $action.bit ) -eq $action.bit ) 
+                        $tokenNullSafe   = ($null -eq $permission.token) ? "" : $permission.token
+                        $enumactions  = New-Object "System.Collections.Generic.Dictionary[[String],[String]]"
+                        foreach ( $action in $namespace.actions )
                         {
-                            $enumactions.Add($action.displayName, "Allow")
+                            if (( $allowNullSafe -band $action.bit ) -eq $action.bit ) 
+                            {
+                                $enumactions.Add($action.displayName, "Allow")
+                            }
+                            elseif (( $effectiveAllowNullSafe -band $action.bit ) -eq $action.bit )
+                            {
+                                $enumactions.Add($action.displayName, "Inherited Allow")
+                            }
+                            elseif (( $effectiveDenyNullSafe -band $action.bit ) -eq $action.bit )
+                            {
+                                $enumactions.Add($action.displayName, "Inherited Deny")
+                            }
+                            elseif (( $denyNullSafe -band $action.bit ) -eq $action.bit )
+                            {
+                                $enumactions.Add($action.displayName, "Deny")
+                            }
+                            else
+                            {
+                                $enumactions.Add($action.displayName, "Not Set")
+                            }
+                        }  
+                        $friendlyToken = $tokenNullSafe
+                        $permissionitem = [pscustomobject]@{
+                            namespaceId          = $namespace.namespaceId
+                            namespaceName        = $namespace.name
+                            namespacedisplayName = $namespace.displayName
+                            inheritPermissions   = ($null -eq $permission.inheritPermissions) ? $false : $permission.inheritPermissions
+                            token                = $tokenNullSafe
+                            friendlyToken        = $friendlyToken
+                            descriptor           = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
+                            friendlydescriptor   = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
+                            allow                = $allowNullSafe
+                            deny                 = $denyNullSafe
+                            effectiveAllow       = $effectiveAllowNullSafe
+                            effectiveDeny        = $effectiveDenyNullSafe
+                            enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
                         }
-                        elseif (( $effectiveAllowNullSafe -band $action.bit ) -eq $action.bit )
-                        {
-                            $enumactions.Add($action.displayName, "Inherited Allow")
-                        }
-                        elseif (( $effectiveDenyNullSafe -band $action.bit ) -eq $action.bit )
-                        {
-                            $enumactions.Add($action.displayName, "Inherited Deny")
-                        }
-                        elseif (( $denyNullSafe -band $action.bit ) -eq $action.bit )
-                        {
-                            $enumactions.Add($action.displayName, "Deny")
-                        }
-                        else
-                        {
-                            $enumactions.Add($action.displayName, "Not Set")
-                        }
-                    }  
-                    $friendlyToken = $tokenNullSafe
-                    $permissionitem = [pscustomobject]@{
-                        namespaceId          = $namespace.namespaceId
-                        namespaceName        = $namespace.name
-                        namespacedisplayName = $namespace.displayName
-                        inheritPermissions   = ($null -eq $permission.inheritPermissions) ? $false : $permission.inheritPermissions
-                        token                = $tokenNullSafe
-                        friendlyToken        = $friendlyToken
-                        descriptor           = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
-                        friendlydescriptor   = ($null -eq $permission.acesDictionary."$_descriptor".descriptor) ? "" : $permission.acesDictionary."$_descriptor".descriptor
-                        allow                = $allowNullSafe
-                        deny                 = $denyNullSafe
-                        effectiveAllow       = $effectiveAllowNullSafe
-                        effectiveDeny        = $effectiveDenyNullSafe
-                        enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
+                        $queue += $permissionitem
                     }
-                    $queue += $permissionitem
                 }
             }
-            if ($ref['Lock'].WaitOne()) 
-            {
-                ($queue | ConvertTo-Json -Depth 100).TrimStart("[").TrimEnd("]`n") + "," | Out-File -FilePath $ref['File'] -append -force
-                $ref['Lock'].ReleaseMutex()
+            if ($queue.Count -ne 0) 
+            { 
+                if ($ref['Lock'].WaitOne()) 
+                {
+                    Update-ConsoleLine -Line 13 -Message "To File: $($namespace.name) - ($($namespace.namespaceId))"
+                    if ( Test-Path $ref['File'] )
+                    {
+                        "," | Out-File -FilePath $ref['File'] -append -force -NoNewline
+                        ((($queue | ConvertTo-Json -Depth 100).TrimStart("[")).TrimEnd("]")) | Out-File -FilePath $ref['File'] -append -force -NoNewline
+                    }
+                    else 
+                    {
+                        "[" | Out-File -FilePath $ref['File'] -Force -NoNewline
+                        ((($queue | ConvertTo-Json -Depth 100).TrimStart("[")).TrimEnd("]")) | Out-File -FilePath $ref['File'] -append -force -NoNewline
+                    }
+                    $ref['Lock'].ReleaseMutex()
+                }
             }                   
             $queue = @()
         }
-    }
-    $fs = [System.IO.File]::Open(".\data\Permissions.json", 'Open', 'ReadWrite')
-    $fs.SetLength($fs.Length - 3)
-    $fs.Close()
-    "`n]" | Out-File -FilePath ".\data\Permissions.json" -append -Force
+        "`n]" | Out-File -FilePath ".\data\Permissions.json" -append -Force
     }
     catch 
     {
@@ -228,7 +264,6 @@ function Get-AzureDevOpsPermissions {
     finally 
     {
         Update-ConsoleLine -Line 13
-        #$threadSafeallPermissions = $null
     }
 }
 function Convert-Permissions {
@@ -236,13 +271,13 @@ function Convert-Permissions {
         [string]$Authheader,
         [string]$orgUrl
     )
-    #todo: Lookup:
+    # todo: Resolve Service Accounts and Service Principals
+    # todo: Lookup:
     # AnalyticsViews, 
     # ServiceEndpoints, 
     # Plan, 
     # Process, 
     # CSS, 
-    # TeamLabSecurity, 
     # Iteration, 
     # Workspaces (seems like this is associated with VS Profile), 
     # DashboardsPrivileges
@@ -657,7 +692,7 @@ function Main {
         Remove-Item -Path ".\data\Users.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Identities.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Errors.log" -Force -ErrorAction SilentlyContinue
-        "Errorlog       :" | Out-File -FilePath ".\data\Errors.log" -Force
+        "" | Out-File -FilePath ".\data\Errors.log" -Force
         Write-Host "Please enter your Org Name"
         $orgName = Read-Host
         $orgUrl = "https://dev.azure.com/$orgname"
