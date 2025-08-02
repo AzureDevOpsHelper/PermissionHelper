@@ -47,14 +47,29 @@ function Get-GraphToken {
 }
 function Update-ConsoleLine {
     param (
-        [int]$Line = 0,
+        [int]$Line,
         [string]$Message = ""
     )
-    [Console]::SetCursorPosition(0, $Line)
-    [Console]::Write(" " * ([Console]::BufferWidth))
-    [Console]::SetCursorPosition(0, $Line)
-    if ($Message -ne "") {
-            Write-Host $Message -NoNewline
+    if ($Global:Console['Lock'].WaitOne()) 
+    {
+<#        if ($line -gt 10 )
+        {
+            $gotime = [int](Get-Date -Format "fff")  
+            $diff = ($line * 10)  - $gotime
+            if ($diff -lt 0) 
+            {
+                $diff += 1000  
+            }
+            Start-Sleep -Milliseconds $diff
+        } #>
+        $Global:Console['Line'] = $Line
+        [Console]::SetCursorPosition(0, $Line)
+        [Console]::Write(" " * ([Console]::BufferWidth))
+        [Console]::SetCursorPosition(0, $Line)
+        if ($Message -ne "") {
+                Write-Host $Message -NoNewline
+        } 
+        $Global:Console['Lock'].ReleaseMutex()
     }
 }
 function Update-Log {
@@ -118,9 +133,6 @@ function GET-AzureDevOpsRestAPI {
         }
         $WarningPreference = $WP
         $ProgressPreference = $PP
-        Update-ConsoleLine -Line 15
-        Update-ConsoleLine -Line 16
-        Update-ConsoleLine -Line 17
         return $results
     }
     Catch {
@@ -169,23 +181,35 @@ function Get-AzureDevOpsPermissions {
                                                             $_.Name -ne "WorkItemTracking" -and `
                                                             $_.Name -ne "WorkItemTrackingConfiguration"}
         $activeNS = $activeNS | Sort-Object -Property name
-        $activeNS | Foreach-Object -ThrottleLimit 9 -Parallel {
+        $activeNS | Foreach-Object -ThrottleLimit 12 -Parallel {
             $namespace        = $_
             $Authheader       = $using:Authheader
             $_orgUrl          = $using:orgUrl
             $ref              = $using:processedItems
             $scriptPath = $MyInvocation.MyCommand.Path
-            $queue = @()
+            $threadSafeallPermissions = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
             if (-not $scriptPath) {
-            $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
+                $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
             }
             $env:IS_CHILD_JOB = $true 
             . "$scriptPath"
             $permissionUrl = $_orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
             $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
-            Update-ConsoleLine -Line 13 -Message "Getting Namespace: $($namespace.name) - ($($namespace.namespaceId))" 
-            foreach ($permission in $permissionResult.results.value)
-            {   
+            #Update-ConsoleLine -Line 13 -Message "Getting Namespace: $($namespace.name) - ($($namespace.namespaceId))" 
+            #foreach ($permission in $permissionResult.results.value)
+            #{
+            $permissionResult.results.value | ForEach-Object -ThrottleLimit 15 -Parallel {   
+                $permission = $_
+                $namespace  = $using:namespace
+                #$Authheader = $using:Authheader
+                #$orgUrl     = $using:orgUrl
+                $queue      = $using:threadSafeallPermissions
+                $scriptPath = $MyInvocation.MyCommand.Path
+                if (-not $scriptPath) {
+                    $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
+                }
+                $env:IS_CHILD_JOB = $true 
+                . "$scriptPath"
                 #$sp = ($permission.token).Split("/")
                 #Update-ConsoleLine -Line 14 -Message "Token: $(sp[1])/.../$($sp[-1])"
                 foreach ($descriptor in ((($permission.acesDictionary).psobject.Properties).Value))
@@ -238,33 +262,36 @@ function Get-AzureDevOpsPermissions {
                             effectiveDeny        = $effectiveDenyNullSafe
                             enumactions          = $enumactions | ConvertTo-Json | ConvertFrom-Json
                         }
-                        $queue += $permissionitem
+                        $queue.Enqueue($permissionitem)
                     }
                 }
             }
-            if ($queue.Count -ne 0) 
+            #$allPermissions = @()
+            #$allPermissions = [array]$threadSafeallPermissions
+            #Remove-Variable -Name threadSafeallPermissions -ErrorAction SilentlyContinue
+            if ($threadSafeallPermissions.Count -ne 0) 
             { 
                 if ($ref['Lock'].WaitOne()) 
                 {
-                    Update-ConsoleLine -Line 13 -Message "Completed Namespace: $($namespace.name) - ($($namespace.namespaceId))" 
-                    Update-ConsoleLine -Line 14 -Message "Writing to File: $($namespace.name) - ($($namespace.namespaceId))"
+                    #Update-ConsoleLine -Line 13 -Message "Completed Namespace: $($namespace.name) - ($($namespace.namespaceId))" 
+                    #Update-ConsoleLine -Line 14 -Message "Writing to File: $($namespace.name) - ($($namespace.namespaceId))"
                     if ( Test-Path $ref['File'] )
                     {
                         "," | Out-File -FilePath $ref['File'] -append -force -NoNewline
-                        ((($queue | ConvertTo-Json -Depth 100).TrimStart("[")).TrimEnd("]")) | Out-File -FilePath $ref['File'] -append -force -NoNewline
+                        ((($threadSafeallPermissions | ConvertTo-Json -Depth 100).TrimStart("[")).TrimEnd("]")) | Out-File -FilePath $ref['File'] -append -force -NoNewline
                     }
                     else 
                     {
                         "[" | Out-File -FilePath $ref['File'] -Force -NoNewline
-                        ((($queue | ConvertTo-Json -Depth 100).TrimStart("[")).TrimEnd("]")) | Out-File -FilePath $ref['File'] -append -force -NoNewline
+                        ((($threadSafeallPermissions | ConvertTo-Json -Depth 100).TrimStart("[")).TrimEnd("]")) | Out-File -FilePath $ref['File'] -append -force -NoNewline
                     }
                     $ref['Lock'].ReleaseMutex()
                 }
             }                   
-            $queue = @()
+            #$queue = @()
         }
         "]" | Out-File -FilePath ".\data\Permissions.json" -append -Force
-        Update-ConsoleLine -Line 14 -Message "Written to File: $($namespace.name) - ($($namespace.namespaceId))"
+        #Update-ConsoleLine -Line 14 -Message "Written to File: $($namespace.name) - ($($namespace.namespaceId))"
     }
     catch 
     {
@@ -273,10 +300,13 @@ function Get-AzureDevOpsPermissions {
     }
     finally 
     {
-        Update-ConsoleLine -Line 13
-        Update-ConsoleLine -Line 14
+    #    Update-ConsoleLine -Line 13
+    #    Update-ConsoleLine -Line 14
         Remove-Variable -Name $namespaces -ErrorAction SilentlyContinue
-        Update-Log -Function "Get-AzureDevOpsPermissions" -Message "Done gettting atomic permissions for $($orgUrl)"
+        Remove-Variable -Name $processedItems -ErrorAction SilentlyContinue
+        Remove-Variable -Name $permissionResult -ErrorAction SilentlyContinue
+        Remove-Variable -Name $threadSafeallPermissions -ErrorAction SilentlyContinue
+        Update-Log -Function "Get-AzureDevOpsPermissions" -Message "Done getting atomic permissions for $($orgUrl)"
     }
 }
 function Convert-Permissions {
@@ -362,7 +392,7 @@ function Convert-Permissions {
                         #it seems like sometimes the SID a group has is not the same as the one in permissions (mostly for PCA group)
                         try
                         {
-                            Update-Log -Function "Convert-Permissions" -Message "Group with SID $groupSID not found in Groups file, trying to get it from Graph API"
+                            #Update-Log -Function "Convert-Permissions" -Message "Group with SID $groupSID not found in Groups file, trying to get it from Graph API"
                             $grpUrl = "$($orgUrl)/_apis/identities?descriptors=Microsoft.TeamFoundation.Identity;$groupSID&api-version=7.2-preview.1"
                             $grpUrl = $grpUrl.Replace("dev.azure.com", "vssps.dev.azure.com")
                             $Result =  GET-AzureDevOpsRestAPI -RestAPIUrl $grpUrl -Authheader $Authheader
@@ -432,7 +462,7 @@ function Convert-Permissions {
                 foreach ($match in $regexMatches)
                 {
                     #$projectname = ($projects | Where-Object { $_.id -eq $match } | Select-Object -Property name).name
-                    $projectname = $projects[$match].name 
+                    $projectname = $projects[$match.Value].name 
                     if ($null -ne  $projectname)
                     {
                         $line = $line.Replace($match.Value,$projectname)
@@ -440,7 +470,7 @@ function Convert-Permissions {
                     else 
                     {
                         #$groupName = ($groups | Where-Object { $_.originId -eq $match } | Select-Object -First 1 -Property principalName).principalName
-                        $groupName = $groups[$match].principalName
+                        $groupName = $groups[$match.Value].principalName
                         if ($null -ne  $groupName)
                         {
                             $line = $line.Replace($match.Value,$groupName.Replace("\","\\"))
@@ -448,7 +478,7 @@ function Convert-Permissions {
                         else 
                         {
                             #$repositoryName = ($repos | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
-                            $repositoryName = $repos[$match].name
+                            $repositoryName = $repos[$match.Value].name
                             if ($null -ne  $repositoryName)
                             {
                                 $line = $line.Replace($match.Value,$repositoryName)
@@ -473,7 +503,7 @@ function Convert-Permissions {
                             else
                             {
                                 #$queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
-                                $queryName = $queries[$match].name
+                                $queryName = $queries[$match.Value].name
                                 if ($null -ne  $queryName)
                                 {
                                     $line = $line.Replace($match.Value,$queryName)
@@ -684,18 +714,18 @@ function Get-AzureDevOpsUsers {
                 $usersUrl = "$($orgUrl)/_apis/graph/users?continuationToken=$($Result.responseHeaders."x-ms-continuationtoken")&api-version=7.2-preview.1"
             }
             $Result = GET-AzureDevOpsRestAPI -RestAPIUrl $usersUrl -Authheader $Authheader
-            Update-ConsoleLine -Line 12 -Message "Users Total: $($allUsers.Count)"
+            #Update-ConsoleLine -Line 12 -Message "Users Total: $($allUsers.Count)"
             $allUsers += $Result.results.value
             
         }
         While ($null -ne $Result.responseHeaders."x-ms-continuationtoken")
 
-        Update-ConsoleLine -Line 12 -Message "Saving Users to file"
+        #Update-ConsoleLine -Line 12 -Message "Saving Users to file"
         $allUsers | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Users.json" -Force
         $descriptors = $allUsers | Select-Object -ExpandProperty descriptor
         Remove-Variable -Name $allUsers -ErrorAction SilentlyContinue
         $identityUrls = @()
-        Update-ConsoleLine -Line 12 -Message "Batching descriptors in groups of 50 for API calls"
+        #Update-ConsoleLine -Line 12 -Message "Batching descriptors in groups of 50 for API calls"
         for ($i = 0; $i -lt $descriptors.Count; $i += 50) {
             $batch = $descriptors[$i..([math]::Min($i+49, $descriptors.Count-1))]
             $descriptorString = $batch -join ','
@@ -705,12 +735,15 @@ function Get-AzureDevOpsUsers {
         }
         Remove-Variable -Name $descriptors -ErrorAction SilentlyContinue
         $processed = [hashtable]::Synchronized(@{
-            Lock    = [System.Threading.Mutex]::new()
-            File    = ".\data\Identities.json"
+            Lock   = [System.Threading.Mutex]::new()
+            File   = ".\data\Identities.json"
+            Count  = 0
         })
-        Update-ConsoleLine -Line 12 -Message "Getting Identities in parallel"
-        $identityUrls | Foreach-Object -ThrottleLimit 5 -Parallel {
+        $Total = $identityUrls.Count
+        #Update-ConsoleLine -Line 12 -Message "Getting Identities in parallel"
+        $identityUrls | Foreach-Object -ThrottleLimit 6 -Parallel {
             $identityUrl = $_
+            $Total = $using:Total
             $_Authheader = $using:Authheader
             $ref = $using:processed
             $scriptPath = $MyInvocation.MyCommand.Path
@@ -738,6 +771,8 @@ function Get-AzureDevOpsUsers {
                     $queue = $queue.Trim("[", "`n", "]")
                     $queue  | Out-File -FilePath $ref['File'] -append -force -NoNewline
                 }
+                $ref['Count']++
+                #Update-ConsoleLine -Line 12 -Message "Processed $($ref['Count']) groups out of $Total groups"
                 $ref['Lock'].ReleaseMutex()
             }                   
         }
@@ -781,11 +816,11 @@ function Main {
         }
         $jobSpecs = @(
             @{ Name = "GetPermissionsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsPermissions  -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
-            @{ Name = "GetProjectsJob";    Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects     -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
-            @{ Name = "GetGroupsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups       -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
+            @{ Name = "GetProjectsJob";    Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects     -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
+            @{ Name = "GetGroupsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups       -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
             @{ Name = "GetUsersJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers        -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
-            @{ Name = "GetReposJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsRepositories -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
-            @{ Name = "GetQueriesJob";     Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries      -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; Streaming = $Host }
+            @{ Name = "GetReposJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsRepositories -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
+            @{ Name = "GetQueriesJob";     Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries      -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; }
         )
         $jobs = @()
         foreach ($spec in $jobSpecs) {
@@ -798,7 +833,7 @@ function Main {
                 }
             }
         }
-        clear-host
+        Clear-Host
         [Console]::CursorVisible = $false
         $complete = @()
         while ($jobs.Count -gt 0) 
@@ -841,20 +876,21 @@ function Main {
                 Update-ConsoleLine -Line $done.Id -Message "$($done.Name): $($done.State)"
             }
             Update-ConsoleLine -Line $timerpos -Message ("Execution time: {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
-            for($inc = 1; $inc -le 4; $inc++) {
-                Update-ConsoleLine -Line ($timerpos + $inc)
-            }
-            Start-Sleep -Seconds 2
+#            for($inc = 1; $inc -le 4; $inc++) {
+#                Update-ConsoleLine -Line ($timerpos + $inc)
+#            }
+            Start-Sleep -Seconds 1
         }
+        Clear-Host
         Update-ConsoleLine -line 1 -Message "Performing Post Processing to give friendly tokens and descriptors..."
-        for($inc = 2; $inc -le 15; $inc++) {
-            Update-ConsoleLine -Line ($inc)
-        }
+        #for($inc = 2; $inc -le 10; $inc++) {
+        #    Update-ConsoleLine -Line ($inc)
+        #}        
         Convert-Permissions -Authheader $Authheader -orgUrl $orgUrl
         $stopwatch.Stop()
         [Console]::CursorVisible = $true
         
-        Update-ConsoleLine -Line 13    
+        #Update-ConsoleLine -Line 13    
         Update-ConsoleLine -Line 3 -Message ("Total Execution time: {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
         Update-ConsoleLine -Line 4 -Message "All jobs completed successfully."
         Update-ConsoleLine -Line 5
@@ -871,6 +907,11 @@ function Main {
         Update-Log -Function "Main" -Message "Done executing PermissionHelper.ps1"
     }
 }
+
+$Global:Console = [hashtable]::Synchronized(@{
+    Lock   = [System.Threading.Mutex]::new()
+    Line   = [int] 0
+})
 
 if (-not $env:IS_CHILD_JOB) {
     Main
