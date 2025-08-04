@@ -52,16 +52,6 @@ function Update-ConsoleLine {
     )
     if ($Global:Console['Lock'].WaitOne()) 
     {
-<#        if ($line -gt 10 )
-        {
-            $gotime = [int](Get-Date -Format "fff")  
-            $diff = ($line * 10)  - $gotime
-            if ($diff -lt 0) 
-            {
-                $diff += 1000  
-            }
-            Start-Sleep -Milliseconds $diff
-        } #>
         $Global:Console['Line'] = $Line
         [Console]::SetCursorPosition(0, $Line)
         [Console]::Write(" " * ([Console]::BufferWidth))
@@ -100,7 +90,8 @@ function Update-Log {
 function GET-AzureDevOpsRestAPI {
     param (
         [string]$Authheader,
-        [string]$RestAPIUrl
+        [string]$RestAPIUrl,
+        [string]$Method = 'GET'
     )
 
     $Headers = @{
@@ -110,7 +101,7 @@ function GET-AzureDevOpsRestAPI {
     $params = @{
         Uri                     = $RestAPIUrl
         Headers                 = $headers
-        Method                  = 'GET'
+        Method                  = $Method
         ContentType             = 'application/json'
         StatusCodeVariable      = 'statusCode' 
         ResponseHeadersVariable = 'responseHeaders'
@@ -314,16 +305,6 @@ function Convert-Permissions {
         [string]$Authheader,
         [string]$orgUrl
     )
-    # todo: Resolve Service Accounts and Service Principals
-    # todo: Lookup:
-    # AnalyticsViews, 
-    # ServiceEndpoints, 
-    # Plan, 
-    # Process, 
-    # CSS, 
-    # Iteration, 
-    # Workspaces (seems like this is associated with VS Profile), 
-    # DashboardsPrivileges
     try
     {
         Update-Log -Function "Convert-Permissions" -Message "Starting to convert permissions file for $($orgUrl)"
@@ -331,7 +312,23 @@ function Convert-Permissions {
         Update-Log -Function "Convert-Permissions" -Message "Reading Groups file"
         $groupfile = Get-Item -Path ".\data\Groups.json"
         $groups = Get-Content -Path $groupfile.FullName -Raw
-        $groups = ($groups | ConvertFrom-Json) | Select-Object -Property SID, principalName 
+        $groups = ($groups | ConvertFrom-Json)  
+        
+        $TFID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") -and ($_.principalName).Contains("[TEAM FOUNDATION]")} | Select-Object -First 1 -Property domain).domain
+        $TFID = $TFID.TrimStart('vstfs:///Framework/IdentityDomain/')
+        $TFID = @{ 
+            id   = $TFID
+            name = "[TEAM FOUNDATION]"
+        }
+
+        $orgname = ($orgUrl.Split("/"))[-1]
+        $OrgID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") -and ($_.principalName).Contains("[$orgname]")} | Select-Object -First 1 -Property domain).domain
+        $OrgID = $OrgID.TrimStart('vstfs:///Framework/IdentityDomain/')
+        $OrgID = @{
+            id   = $OrgID
+            name = "[$orgname]"
+        }
+        $groups = $groups | Select-Object -Property SID, principalName
         $groups = $groups | Group-Object -AsHashTable -Property SID 
         Update-Log -Function "Convert-Permissions" -Message "Loaded Groups file to Hashtable"
         Remove-Variable -Name $groupfile -ErrorAction SilentlyContinue
@@ -365,6 +362,14 @@ function Convert-Permissions {
         $queries = Get-Content -Path $queryfile.FullName -Raw
         $queries = ($queries | ConvertFrom-Json) | Select-Object -Property id, name
         $queries = $queries | Group-Object -AsHashtable -Property id
+        Update-Log -Function "Convert-Permissions" -Message "Loaded Queries file to Hashtable"
+        Remove-Variable -Name $queryfile -ErrorAction SilentlyContinue
+
+        Update-Log -Function "Convert-Permissions" -Message "Reading AnalyticsViews file"
+        $Viewsfile = Get-Item -Path ".\data\AnalyticsViews.json"
+        $Views = Get-Content -Path $Viewsfile.FullName -Raw
+        $Views = ($Views | ConvertFrom-Json) | Select-Object -Property id, name
+        $Views = $Views | Group-Object -AsHashtable -Property id
         Update-Log -Function "Convert-Permissions" -Message "Loaded Queries file to Hashtable"
         Remove-Variable -Name $queryfile -ErrorAction SilentlyContinue
         
@@ -508,6 +513,39 @@ function Convert-Permissions {
                                 {
                                     $line = $line.Replace($match.Value,$queryName)
                                 }
+                                else
+                                {
+                                    #$queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
+                                    $viewName = $views[$match.Value].name
+                                    if ($null -ne  $viewName)
+                                    {
+                                        $line = $line.Replace($match.Value,$viewName)
+                                    }
+                                    else
+                                    {
+                                        if ($TFID.id -eq  $match.Value)
+                                        {
+                                            $line = $line.Replace($match.Value,$TFID.name)
+                                        }
+                                        else
+                                        {
+                                            if ($OrgID.id -eq  $match.Value)
+                                            {
+                                                $line = $line.Replace($match.Value,$OrgID.name)
+                                            }                            
+                                            #else
+                                            #{
+                                            #    #$queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
+                                            #    $identityName = $identities.
+                                            #    $identityName = ($identityname. -eq $identityName) ? $match.Value : $identityName.customDisplayName
+                                            #    if ($null -ne  $identityName)
+                                            #    {
+                                            #        $line = $line.Replace($match.Value,$identityName)
+                                            #    }
+                                            #}
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -523,7 +561,7 @@ function Convert-Permissions {
     }
     catch
     {
-        Update-Log -Function "Convert-Permissions" -Message "Error while processing permissions file" -URL ".\data\Permissions.json" -ErrorM $_ath ".\data\Errors.log" -Append -Force
+        Update-Log -Function "Convert-Permissions" -Message "Error while processing permissions file" -URL ".\data\Permissions.json" -ErrorM $_ ".\data\Errors.log" -Append -Force
         throw $_ 
     }
     finally
@@ -535,6 +573,7 @@ function Convert-Permissions {
         Remove-Variable -Name $identities -ErrorAction SilentlyContinue
         Remove-Variable -Name $queries -ErrorAction SilentlyContinue
         Remove-Variable -Name $repos -ErrorAction SilentlyContinue
+        Remove-Variable -Name $views -ErrorAction SilentlyContinue
         Update-Log -Function "Convert-Permissions" -Message "Done converting permissions file for $($orgUrl)"
     }
 }
@@ -791,6 +830,81 @@ function Get-AzureDevOpsUsers {
         Update-Log -Function "Get-AzureDevOpsUsers" -Message "Done getting users for $($orgUrl)"
     }
 }
+function Get-AzureDevOpsAnalyticsViews {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    try 
+    {   
+        $orgUrl = $orgUrl.Replace("dev.azure.com", "analytics.dev.azure.com")
+        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Starting to get Analytics Views for $($orgUrl)"
+        $projfile = Get-Item -Path ".\data\Projects.json"
+        $projects = Get-Content -Path $projfile.FullName -Raw
+        $projects = $projects | ConvertFrom-Json | Where-Object { $_.state -ne "Domain" } | Select-Object -Property id, name
+        $Views = @()
+        foreach ($project in $projects)
+        {
+            $viewUrl = "$($orgUrl)/$($project.Name)/_apis/Analytics/Views?api-version=7.2-preview.1"
+            $viewUrl = [System.Uri]::EscapeUriString($viewUrl)
+            $ViewsResult = GET-AzureDevOpsRestAPI -RestAPIUrl $viewUrl -Authheader $Authheader
+            if ($null -ne $ViewsResult.results.value) 
+            {
+                $Views += $ViewsResult.results.value
+            }
+        }
+        $Views | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
+    }
+    Catch 
+    {
+        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Error while getting Analytics Views for $($orgUrl)" -URL $reposUrl -ErrorM $_
+        throw $_
+    }
+    finally 
+    {
+        Remove-Variable -Name $Views -ErrorAction SilentlyContinue
+        Remove-Variable -Name $ViewsResult -ErrorAction SilentlyContinue
+        Remove-Variable -Name $projects -ErrorAction SilentlyContinue
+        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Done getting Analytics Views for $($orgUrl)"
+    }
+}
+function Get-AzureDevOpsServiceEndpoints {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    try 
+    {   
+        Update-Log -Function "Get-AzureDevOpsServiceEndpoints" -Message "Starting to get Service Endpoints for $($orgUrl)"
+        $projfile = Get-Item -Path ".\data\Projects.json"
+        $projects = Get-Content -Path $projfile.FullName -Raw
+        $projects = $projects | ConvertFrom-Json | Where-Object { $_.state -ne "Domain" } | Select-Object -Property id, name
+        $endpoints = @()
+        foreach ($project in $projects)
+        {
+            $endpointUrl = "$($orgUrl)/$($project.name)/_apis/serviceendpoint/endpoints?api-version=7.2-preview.4"
+            $endpointResult = GET-AzureDevOpsRestAPI -RestAPIUrl $endpointUrl -Authheader $Authheader
+            if ($null -ne $endpointResult.results.value -and $endpointResult.results.value.Count -gt 0) 
+            {
+                $endpointsResult = $endpointResult.results
+            }
+        }
+        $endpoints | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\ServiceEndpoint.json" -Force
+
+    }
+    Catch 
+    {
+        Update-Log -Function "Get-AzureDevOpsServiceEndpoints" -Message "Error while getting Service Endpoints for $($orgUrl)" -URL $reposUrl -ErrorM $_
+        throw $_
+    }
+    finally 
+    {
+        Remove-Variable -Name $endpoints -ErrorAction SilentlyContinue
+        Remove-Variable -Name $endpointsResult -ErrorAction SilentlyContinue
+        Remove-Variable -Name $projects -ErrorAction SilentlyContinue
+        Update-Log -Function "Get-AzureDevOpsServiceEndpoints" -Message "Done getting Service Endpoints for $($orgUrl)"
+    }
+}
 function Main {
     try
     {
@@ -802,6 +916,7 @@ function Main {
         Remove-Item -Path ".\data\Queries.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Users.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Identities.json" -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path ".\data\AnalyticsViews.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Errors.log" -Force -ErrorAction SilentlyContinue
         Update-Log -Function "Main" -Message "Starting execution of PermissionHelper.ps1"
         Write-Host "Please enter your Org Name"
@@ -815,12 +930,14 @@ function Main {
             $scriptPath = Get-ChildItem -Path "$((Get-Location).Path)\PermissionHelper.ps1" -ErrorAction Stop | Select-Object -ExpandProperty FullName -First 1
         }
         $jobSpecs = @(
-            @{ Name = "GetPermissionsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsPermissions  -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
-            @{ Name = "GetProjectsJob";    Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects     -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
-            @{ Name = "GetGroupsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups       -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
-            @{ Name = "GetUsersJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers        -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
-            @{ Name = "GetReposJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsRepositories -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
-            @{ Name = "GetQueriesJob";     Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries      -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; }
+            @{ Name = "GetPermissionsJob";      Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsPermissions      -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
+            @{ Name = "GetProjectsJob";         Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProjects         -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
+            @{ Name = "GetGroupsJob";           Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups           -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
+            @{ Name = "GetUsersJob";            Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers            -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
+            @{ Name = "GetReposJob";            Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsRepositories     -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
+            @{ Name = "GetAnalyticsViewsJob";   Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsAnalyticsViews   -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; },
+            @{ Name = "GetServiceEndpointsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsServiceEndpoints -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; },
+            @{ Name = "GetQueriesJob";          Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries          -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; }
         )
         $jobs = @()
         foreach ($spec in $jobSpecs) {
@@ -858,6 +975,23 @@ function Main {
                         $jobs += Start-ThreadJob -ScriptBlock $next.Script -ArgumentList $next.Args -Name $next.Name -StreamingHost $spec.Streaming
                         $newid = $jobs | Where-Object { $_.Name -eq "GetQueriesJob" }
                         Update-ConsoleLine -Line $newid.Id -Message "$($newid.Name): $($newid.State)"
+                        
+                    }
+                    if (($Name -eq "GetProjectsJob") -and ($null -eq ($jobs | Where-Object { $_.Name -eq "GetAnalyticsViewsJob" } )) )
+                    {
+                        $next = $jobSpecs | Where-Object { $_.name -eq "GetAnalyticsViewsJob" }
+                        $jobs += Start-ThreadJob -ScriptBlock $next.Script -ArgumentList $next.Args -Name $next.Name -StreamingHost $spec.Streaming
+                        $newid = $jobs | Where-Object { $_.Name -eq "GetAnalyticsViewsJob" }
+                        Update-ConsoleLine -Line $newid.Id -Message "$($newid.Name): $($newid.State)"
+                        
+                    }
+                    if (($Name -eq "GetProjectsJob") -and ($null -eq ($jobs | Where-Object { $_.Name -eq "GetServiceEndpointsJob" } )) )
+                    {
+                        $next = $jobSpecs | Where-Object { $_.name -eq "GetServiceEndpointsJob" }
+                        $jobs += Start-ThreadJob -ScriptBlock $next.Script -ArgumentList $next.Args -Name $next.Name -StreamingHost $spec.Streaming
+                        $newid = $jobs | Where-Object { $_.Name -eq "GetServiceEndpointsJob" }
+                        Update-ConsoleLine -Line $newid.Id -Message "$($newid.Name): $($newid.State)"
+                        
                     }
                     $complete += $done
                     $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }

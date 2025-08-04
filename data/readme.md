@@ -1,0 +1,2 @@
+### Data Folder
+This folder is where the script will place the Data file it creates as opposed to holding all the sets of results in memory (to avoid OOMS).  Git won't let you have an empty folder in the Repo so I placed this here to persist and explain.
