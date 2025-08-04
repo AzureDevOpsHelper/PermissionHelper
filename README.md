@@ -28,19 +28,19 @@
 ## To Dos:
 
 ### Need Investigations:
- 1. Resolve Service Accounts and Service Principals Ids.
-   - We may need to go to GraphAPI for this.
- 2. Resolve Workspace Tokens.
-   - Seems like this is associated with VS Profile.
+1. Resolve Service Accounts and Service Principals Ids.
+  - We may need to go to GraphAPI for this.
+2. Resolve Workspace Tokens.
+  - Seems like this is associated with VS Profile.
 
 ### Need Lookups added for:
- 1. Plan 
- 2. Process 
- 3. CSS 
- 4. Iteration 
- 6. DashboardsPrivileges
+1. Plan 
+2. Process 
+3. CSS 
+4. Iteration 
+5. DashboardsPrivileges
 
 ### Stretch Goals
- 1. Wire up inheritance chains
- 2. Investigate feasability of per project runs (though we may still have to pull full IDentities, groups etc for this to work.)
- 3. Configurable or adaptable Thread pool sizes for best experience.
+1. Wire up inheritance chains
+2. Investigate feasability of per project runs (though we may still have to pull full IDentities, groups etc for this to work.)
+3. Configurable or adaptable Thread pool sizes for best experience.
