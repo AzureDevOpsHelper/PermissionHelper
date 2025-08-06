@@ -60,7 +60,7 @@ function Update-ConsoleLine {
                 Write-Host $Message -NoNewline
         } 
         $Global:Console['Lock'].ReleaseMutex()
-    }
+   }
 }
 function Update-Log {
     param (
@@ -328,11 +328,14 @@ function Convert-Permissions {
             id   = $OrgID
             name = "[$orgname]"
         }
-        $groups = $groups | Select-Object -Property SID, principalName
-        $groups = $groups | Group-Object -AsHashTable -Property SID 
-        Update-Log -Function "Convert-Permissions" -Message "Loaded Groups file to Hashtable"
+        $groups1 = $groups | Select-Object -Property SID, principalName
+        $groups2 = $groups | Select-Object -Property originId, displayName
+        $groups2 = $groups2 | Group-Object -AsHashTable -Property originId
+        $groups = $groups1 | Group-Object -AsHashTable -Property SID 
+
+        Update-Log -Function "Convert-Permissions" -Message "Loaded Groups file to Hashtables"
         Remove-Variable -Name $groupfile -ErrorAction SilentlyContinue
-        
+
         Update-Log -Function "Convert-Permissions" -Message "Reading Projects file"
         $projfile = Get-Item -Path ".\data\Projects.json"
         $projects = Get-Content -Path $projfile.FullName -Raw
@@ -370,9 +373,33 @@ function Convert-Permissions {
         $Views = Get-Content -Path $Viewsfile.FullName -Raw
         $Views = ($Views | ConvertFrom-Json) | Select-Object -Property id, name
         $Views = $Views | Group-Object -AsHashtable -Property id
-        Update-Log -Function "Convert-Permissions" -Message "Loaded Queries file to Hashtable"
-        Remove-Variable -Name $queryfile -ErrorAction SilentlyContinue
+        Update-Log -Function "Convert-Permissions" -Message "Loaded AnalyticsViews file to Hashtable"
+        Remove-Variable -Name $Viewsfile -ErrorAction SilentlyContinue
         
+        Update-Log -Function "Convert-Permissions" -Message "Reading Processes file"
+        $Processesfile = Get-Item -Path ".\data\Processes.json"
+        $Processes = Get-Content -Path $Processesfile.FullName -Raw
+        $Processes = ($Processes | ConvertFrom-Json) | Select-Object -Property typeId, name
+        $Processes = $Processes | Group-Object -AsHashtable -Property typeId
+        Update-Log -Function "Convert-Permissions" -Message "Loaded Processes file to Hashtable"
+        Remove-Variable -Name $Processesfile -ErrorAction SilentlyContinue
+
+        Update-Log -Function "Convert-Permissions" -Message "Reading Service Endpoints file"
+        $serviceEndpointsfile = Get-Item -Path ".\data\serviceendpoint.json"
+        $serviceEndpoints = Get-Content -Path $serviceEndpointsfile.FullName -Raw
+        $serviceEndpoints = ($serviceEndpoints | ConvertFrom-Json) | Select-Object -Property id, name
+        $serviceEndpoints = $serviceEndpoints | Group-Object -AsHashtable -Property id
+        Update-Log -Function "Convert-Permissions" -Message "Loaded Service Endpoints file to Hashtable"
+        Remove-Variable -Name $serviceEndpointsfile -ErrorAction SilentlyContinue
+
+        Update-Log -Function "Convert-Permissions" -Message "Reading Dashboards file"
+        $dashboardsfile = Get-Item -Path ".\data\Dashboards.json"
+        $dashboards = Get-Content -Path $dashboardsfile.FullName -Raw
+        $dashboards = ($dashboards | ConvertFrom-Json) | Select-Object -Property id, name
+        $dashboards = $dashboards | Group-Object -AsHashtable -Property id
+        Update-Log -Function "Convert-Permissions" -Message "Loaded Dashboards file to Hashtable"
+        Remove-Variable -Name $dashboardsfile -ErrorAction SilentlyContinue
+
         $reader = [System.IO.File]::OpenText(".\data\Permissions.json")
         Remove-Item -Path ".\data\Permissions_Readable.json" -Force -ErrorAction SilentlyContinue
         $writer = New-Object System.IO.StreamWriter(".\data\Permissions_Readable.json", $false, [System.Text.Encoding]::UTF8)
@@ -466,7 +493,6 @@ function Convert-Permissions {
                 $regexMatches = $regex.Matches($line)
                 foreach ($match in $regexMatches)
                 {
-                    #$projectname = ($projects | Where-Object { $_.id -eq $match } | Select-Object -Property name).name
                     $projectname = $projects[$match.Value].name 
                     if ($null -ne  $projectname)
                     {
@@ -474,7 +500,6 @@ function Convert-Permissions {
                     }
                     else 
                     {
-                        #$groupName = ($groups | Where-Object { $_.originId -eq $match } | Select-Object -First 1 -Property principalName).principalName
                         $groupName = $groups[$match.Value].principalName
                         if ($null -ne  $groupName)
                         {
@@ -482,7 +507,6 @@ function Convert-Permissions {
                         }
                         else 
                         {
-                            #$repositoryName = ($repos | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
                             $repositoryName = $repos[$match.Value].name
                             if ($null -ne  $repositoryName)
                             {
@@ -507,7 +531,6 @@ function Convert-Permissions {
                             }
                             else
                             {
-                                #$queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
                                 $queryName = $queries[$match.Value].name
                                 if ($null -ne  $queryName)
                                 {
@@ -515,8 +538,7 @@ function Convert-Permissions {
                                 }
                                 else
                                 {
-                                    #$queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
-                                    $viewName = $views[$match.Value].name
+                                    $viewName = $Views[$match.Value].name
                                     if ($null -ne  $viewName)
                                     {
                                         $line = $line.Replace($match.Value,$viewName)
@@ -533,16 +555,45 @@ function Convert-Permissions {
                                             {
                                                 $line = $line.Replace($match.Value,$OrgID.name)
                                             }                            
-                                            #else
-                                            #{
-                                            #    #$queryName = ($queries | Where-Object { $_.id -eq $match } | Select-Object -First 1 -Property name).name
-                                            #    $identityName = $identities.
-                                            #    $identityName = ($identityname. -eq $identityName) ? $match.Value : $identityName.customDisplayName
-                                            #    if ($null -ne  $identityName)
-                                            #    {
-                                            #        $line = $line.Replace($match.Value,$identityName)
-                                            #    }
-                                            #}
+                                            else
+                                            {
+                                                $ProcessName = $Processes[$match.Value].name
+                                                if ($null -ne  $ProcessName)
+                                                {
+                                                    $line = $line.Replace($match.Value,$ProcessName)
+                                                }
+                                                else
+                                                {
+                                                    $serviceEndpointName = $serviceEndpoints[$match.Value].name
+                                                    if ($null -ne  $serviceEndpointName)
+                                                    {
+                                                        $line = $line.Replace($match.Value,$serviceEndpointName)
+                                                    }
+                                                    else
+                                                    {
+                                                        $groupName2 = $groups2[$match.Value].displayName
+                                                        if ($null -ne  $groupName2)
+                                                        {
+                                                            $line = $line.Replace($match.Value,$groupName2)
+                                                        }
+                                                        else
+                                                        {
+                                                            if ($match.Value -eq  "00000000-0000-0000-0000-000000000000")
+                                                            {
+                                                                $line = $line.Replace($match.Value,"[Default Team]")
+                                                            }
+                                                            else
+                                                            {
+                                                                $dashboardName = $dashboards[$match.Value].name
+                                                                if ($null -ne  $dashboardName)
+                                                                {
+                                                                    $line = $line.Replace($match.Value,$dashboardName)
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -569,11 +620,15 @@ function Convert-Permissions {
         $reader.Close()
         $writer.Close()
         Remove-Variable -Name $groups -ErrorAction SilentlyContinue
+        Remove-Variable -Name $groups2 -ErrorAction SilentlyContinue
         Remove-Variable -Name $projects -ErrorAction SilentlyContinue
         Remove-Variable -Name $identities -ErrorAction SilentlyContinue
         Remove-Variable -Name $queries -ErrorAction SilentlyContinue
         Remove-Variable -Name $repos -ErrorAction SilentlyContinue
-        Remove-Variable -Name $views -ErrorAction SilentlyContinue
+        Remove-Variable -Name $Views -ErrorAction SilentlyContinue
+        Remove-Variable -Name $Processes -ErrorAction SilentlyContinue
+        Remove-Variable -Name $serviceEndpoints -ErrorAction SilentlyContinue
+        Remove-Variable -Name $dashboards -ErrorAction SilentlyContinue
         Update-Log -Function "Convert-Permissions" -Message "Done converting permissions file for $($orgUrl)"
     }
 }
@@ -879,18 +934,29 @@ function Get-AzureDevOpsServiceEndpoints {
         $projfile = Get-Item -Path ".\data\Projects.json"
         $projects = Get-Content -Path $projfile.FullName -Raw
         $projects = $projects | ConvertFrom-Json | Where-Object { $_.state -ne "Domain" } | Select-Object -Property id, name
+        #$typesUrl = "$($orgUrl)/_apis/serviceendpoint/types?api-version=7.1"
+        #$types = GET-AzureDevOpsRestAPI -RestAPIUrl $typesUrl -Authheader $Authheader
+        #$types = $types.results.value | Select-Object -Property id, name, url
         $endpoints = @()
         foreach ($project in $projects)
         {
-            $endpointUrl = "$($orgUrl)/$($project.name)/_apis/serviceendpoint/endpoints?api-version=7.2-preview.4"
+            #foreach ($type in $types) 
+            #{
+            #    $endpointUrl = "$($orgUrl)/$($project.name)/_apis/serviceendpoint/endpoints?type=$($type.id)&includeFailed=true&api-version=7.1"
+            #    $endpointResult = GET-AzureDevOpsRestAPI -RestAPIUrl $endpointUrl -Authheader $Authheader
+            #    if ($null -ne $endpointResult.results.value) 
+            #    {
+            #        $endpoints += $endpointResult.results.value
+            #    }
+            #}
+            $endpointUrl = "$($orgUrl)/$($project.name)/_apis/serviceendpoint/endpoints?includeFailed=true&api-version=7.2-preview.4"
             $endpointResult = GET-AzureDevOpsRestAPI -RestAPIUrl $endpointUrl -Authheader $Authheader
-            if ($null -ne $endpointResult.results.value -and $endpointResult.results.value.Count -gt 0) 
+            if ($null -ne $endpointResult.results.value) 
             {
-                $endpointsResult = $endpointResult.results
+                $endpoints += $endpointResult.results.value
             }
         }
         $endpoints | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\ServiceEndpoint.json" -Force
-
     }
     Catch 
     {
@@ -905,6 +971,60 @@ function Get-AzureDevOpsServiceEndpoints {
         Update-Log -Function "Get-AzureDevOpsServiceEndpoints" -Message "Done getting Service Endpoints for $($orgUrl)"
     }
 }
+function Get-AzureDevOpsProcesses {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    try 
+    {   
+        Update-Log -Function "Get-AzureDevOpsProcesses" -Message "Starting to get Processes for $($orgUrl)"
+        $processUrl = "$($orgUrl)/_apis/work/processes?api-version=7.2-preview.2"
+        $processResult = GET-AzureDevOpsRestAPI -RestAPIUrl $processUrl -Authheader $Authheader
+        $processResult.results.value | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Processes.json" -Force
+    }
+    Catch 
+    {
+        Update-Log -Function "Get-AzureDevOpsProcesses" -Message "Error while getting Processes for $($processUrl)" -URL $reposUrl -ErrorM $_
+        throw $_
+    }
+    finally 
+    {
+        Remove-Variable -Name $processResult -ErrorAction SilentlyContinue
+        Update-Log -Function "Get-AzureDevOpsProcesses" -Message "Done getting Processes for $($processUrl)"
+    }
+}
+function Get-AzureDevOpsDashboards {
+    param (
+        [string]$Authheader,
+        [string]$orgUrl
+    )
+    try 
+    {   
+        Update-Log -Function "Get-AzureDevOpsDashboards" -Message "Starting to get Dashboards for $($orgUrl)"
+        $projfile = Get-Item -Path ".\data\Projects.json"
+        $projects = Get-Content -Path $projfile.FullName -Raw
+        $projects = $projects | ConvertFrom-Json | Where-Object { $_.state -ne "Domain" } | Select-Object -Property id, name
+        $Dashboards = @()
+        foreach ($project in $projects)
+        {
+            $DashboardsUrl = "$($orgUrl)/$($project.name)/_apis/dashboard/dashboards?api-version=7.2-preview.3"
+            $DashboardsResult = GET-AzureDevOpsRestAPI -RestAPIUrl $DashboardsUrl -Authheader $Authheader
+            $Dashboards += $DashboardsResult.results.value
+        }
+        $Dashboards | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Dashboards.json" -Force
+    }
+    Catch 
+    {
+        Update-Log -Function "Get-AzureDevOpsDashboards" -Message "Error while getting Dashboards for $($DashboardsUrl)" -URL $reposUrl -ErrorM $_
+        throw $_
+    }
+    finally 
+    {
+        Remove-Variable -Name $DashboardsResult -ErrorAction SilentlyContinue
+        Update-Log -Function "Get-AzureDevOpsDashboards" -Message "Done getting Dashboards for $($orgUrl)"
+    }
+}
 function Main {
     try
     {
@@ -917,6 +1037,9 @@ function Main {
         Remove-Item -Path ".\data\Users.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Identities.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\AnalyticsViews.json" -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path ".\data\ServiceEndpoint.json" -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path ".\data\Processes.json" -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path ".\data\Dashboards.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Errors.log" -Force -ErrorAction SilentlyContinue
         Update-Log -Function "Main" -Message "Starting execution of PermissionHelper.ps1"
         Write-Host "Please enter your Org Name"
@@ -935,9 +1058,11 @@ function Main {
             @{ Name = "GetGroupsJob";           Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsGroups           -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
             @{ Name = "GetUsersJob";            Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsUsers            -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; Streaming = $Host },
             @{ Name = "GetReposJob";            Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsRepositories     -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
+            @{ Name = "GetProcessesJob";        Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsProcesses        -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 0; },
             @{ Name = "GetAnalyticsViewsJob";   Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsAnalyticsViews   -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; },
             @{ Name = "GetServiceEndpointsJob"; Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsServiceEndpoints -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; },
-            @{ Name = "GetQueriesJob";          Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries          -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; }
+            @{ Name = "GetQueriesJob";          Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsQueries          -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; },
+            @{ Name = "GetDashboardsJob";       Script = { param($Authheader, $orgUrl, $scriptPath); $env:IS_CHILD_JOB = $true; . "$scriptPath"; Get-AzureDevOpsDashboards       -Authheader $Authheader -orgUrl $orgUrl }; Args = @($Authheader, $orgUrl, $scriptPath); Order = 1; }
         )
         $jobs = @()
         foreach ($spec in $jobSpecs) {
@@ -993,6 +1118,14 @@ function Main {
                         Update-ConsoleLine -Line $newid.Id -Message "$($newid.Name): $($newid.State)"
                         
                     }
+                    if (($Name -eq "GetProjectsJob") -and ($null -eq ($jobs | Where-Object { $_.Name -eq "GetDashboardsJob" } )) )
+                    {
+                        $next = $jobSpecs | Where-Object { $_.name -eq "GetDashboardsJob" }
+                        $jobs += Start-ThreadJob -ScriptBlock $next.Script -ArgumentList $next.Args -Name $next.Name -StreamingHost $spec.Streaming
+                        $newid = $jobs | Where-Object { $_.Name -eq "GetDashboardsJob" }
+                        Update-ConsoleLine -Line $newid.Id -Message "$($newid.Name): $($newid.State)"
+                        
+                    }
                     $complete += $done
                     $jobs = $jobs | Where-Object { $_.Id -ne $job.Id }
                 }
@@ -1006,9 +1139,9 @@ function Main {
                     Update-ConsoleLine -Line $job.Id -Message "$($job.Name): $state"
                 }
             }
-            foreach ($done in $complete) {
-                Update-ConsoleLine -Line $done.Id -Message "$($done.Name): $($done.State)"
-            }
+            #foreach ($done in $complete) {
+            #    Update-ConsoleLine -Line $done.Id -Message "$($done.Name): $($done.State)"
+            #}
             Update-ConsoleLine -Line $timerpos -Message ("Execution time: {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
 #            for($inc = 1; $inc -le 4; $inc++) {
 #                Update-ConsoleLine -Line ($timerpos + $inc)

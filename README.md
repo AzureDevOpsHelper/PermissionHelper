@@ -34,13 +34,11 @@
   - Seems like this is associated with VS Profile.
 
 ### Need Lookups added for:
-- Plan 
-- Process 
+- Plan  
 - CSS 
 - Iteration 
-- DashboardsPrivileges
 
 ### Stretch Goals
 - Wire up inheritance chains
-- Investigate feasability of per project runs (though we may still have to pull full IDentities, groups etc for this to work.)
+- Investigate feasability of per project runs (though we may still have to pull full Identities, groups etc for this to work.)
 - Configurable or adaptable Thread pool sizes for best experience.
