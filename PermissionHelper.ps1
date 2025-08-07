@@ -49,17 +49,17 @@ function Update-ConsoleLine {
         [int]$Line,
         [string]$Message = ""
     )
-    if ($Global:Console['Lock'].WaitOne()) 
-    {
-        $Global:Console['Line'] = $Line
+    #if ($Global:Console['Lock'].WaitOne()) 
+    #{
+    #    $Global:Console['Line'] = $Line
         [Console]::SetCursorPosition(0, $Line)
         [Console]::Write(" " * ([Console]::BufferWidth))
         [Console]::SetCursorPosition(0, $Line)
         if ($Message -ne "") {
                 Write-Host $Message -NoNewline
         } 
-        $Global:Console['Lock'].ReleaseMutex()
-   }
+    #    $Global:Console['Lock'].ReleaseMutex()
+    #}
 }
 function Update-Log {
     param (
@@ -306,10 +306,20 @@ function Convert-Permissions {
 
         $orgname = ($orgUrl.Split("/"))[-1]
         $OrgID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") -and ($_.principalName).Contains("[$orgname]")} | Select-Object -First 1 -Property domain).domain
-        $OrgID = $OrgID.TrimStart('vstfs:///Framework/IdentityDomain/')
-        $OrgID = @{
-            id   = $OrgID
-            name = "[$orgname]"
+        if ($null -eq $OrgID)
+        {
+            $OrgID = @{
+                id   = ""
+                name = ""
+            }
+        }
+        else
+        {
+            $OrgID = $OrgID.TrimStart('vstfs:///Framework/IdentityDomain/')
+            $OrgID = @{
+                id   = $OrgID
+                name = "[$orgname]"
+            }
         }
         $groups1 = $groups | Select-Object -Property SID, principalName
         $groups2 = $groups | Select-Object -Property originId, displayName
@@ -945,21 +955,39 @@ function Get-AzureDevOpsAnalyticsViews {
         {
             $viewUrl = "$($orgUrl)/$($project.Name)/_apis/Analytics/Views?api-version=7.2-preview.1"
             $viewUrl = [System.Uri]::EscapeUriString($viewUrl)
-            $ViewsResult = GET-AzureDevOpsRestAPI -RestAPIUrl $viewUrl -Authheader $Authheader
+            try
+            {
+                $ViewsResult = GET-AzureDevOpsRestAPI -RestAPIUrl $viewUrl -Authheader $Authheader
+            }
+            Catch 
+            {
+                if (-not ($_.innerException.message).Contains("VS403490"))
+                {
+                    throw $_
+                }
+                else 
+                {
+                    Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Permissions Error while getting Analytics Views (non-blocking)" -URL $viewUrl -ErrorM $_
+                }
+            }
             if ($null -ne $ViewsResult.results.value) 
             {
                 $Views += $ViewsResult.results.value
             }
         }
-        $Views | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
+#        if ($Views.Count -eq 0)
+#        {
+#            $dummyString = "[`n    {`n        `"id`": `"`",`n        `"name`": `"`"`n    }`n]"
+#            $dummyString | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
+#        }
+#        else 
+#        {
+            $Views | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
+#        }
     }
     Catch 
     {
-        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Error while getting Analytics Views for $($orgUrl)" -URL $reposUrl -ErrorM $_
-        if (-not ($_.message).Contains("VS403490"))
-        {
-            throw $_
-        }
+        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Error while getting Analytics Views for $($orgUrl)" -URL $viewUrl -ErrorM $_
     }
     finally 
     {
@@ -1123,7 +1151,6 @@ function Convert-ClassificationNodes {
             }
         }
         $flatlist = $flatlist | Select-Object -Property id, identifier, name, structureType, projectName, path, url
-        #$flatlist = $flatlist | Select-Object -Unique
         return $flatlist
     }
     catch 
@@ -1313,7 +1340,7 @@ function Main {
 #            for($inc = 1; $inc -le 4; $inc++) {
 #                Update-ConsoleLine -Line ($timerpos + $inc)
 #            }
-            Start-Sleep -Seconds 1
+            Start-Sleep -Milliseconds 500
         }
         Clear-Host
         Update-ConsoleLine -line 1 -Message "Performing Post Processing to give friendly tokens and descriptors..."
@@ -1346,7 +1373,7 @@ function Main {
             Move-Item -Path $file -Destination $zipFolder -Force
         }
         Compress-Archive -Path $zipFolder -DestinationPath "$zipFolder.zip" -Force -CompressionLevel Optimal
-        Pause
+
         Remove-Item -Path $zipFolder -Recurse -Force -ErrorAction SilentlyContinue
         $stopwatch.Stop()
         [Console]::CursorVisible = $true
