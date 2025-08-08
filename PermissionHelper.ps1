@@ -52,11 +52,12 @@ function Update-ConsoleLine {
     #if ($Global:Console['Lock'].WaitOne()) 
     #{
     #    $Global:Console['Line'] = $Line
-        [Console]::SetCursorPosition(0, $Line)
-        [Console]::Write(" " * ([Console]::BufferWidth))
+    #    [Console]::SetCursorPosition(0, $Line)
+    #    [Console]::Write(" " * ([Console]::BufferWidth))
+        $spaces = (" " * ([Console]::BufferWidth - $Message.Length))
         [Console]::SetCursorPosition(0, $Line)
         if ($Message -ne "") {
-                Write-Host $Message -NoNewline
+                Write-Host "$($Message)$($spaces)"  -NoNewline
         } 
     #    $Global:Console['Lock'].ReleaseMutex()
     #}
@@ -82,7 +83,14 @@ function Update-Log {
     if ($null -ne $ErrorM)
     {    
         #$_ | Format-List | Out-File -FilePath ".\data\Errors.log" -Append -Force
-        $ErrorM | ConvertFrom-Json | ConvertTo-Json -Depth 10 | Out-File -FilePath ".\data\Errors.log" -Append -Force
+        try
+        {
+            $ErrorM | ConvertFrom-Json | ConvertTo-Json -Depth 10 | Out-File -FilePath ".\data\Errors.log" -Append -Force
+        }
+        catch
+        {
+            $ErrorM | Format-List | Out-File -FilePath ".\data\Errors.log" -Append -Force
+        }
     }
     "---------------------------------------------------------------------------------------------------------------`r`n" | Out-File -FilePath ".\data\Errors.log" -Append -Force
     
@@ -986,6 +994,14 @@ function Get-AzureDevOpsAnalyticsViews {
                 $Views += $ViewsResult.results.value
             }
         }
+        if ($Views.Count -eq 0)
+        {
+            $dummy = @{
+                id   = ''
+                name = ''
+            }
+            $Views += $dummy
+        }
         $Views | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
     }
     Catch 
@@ -1033,6 +1049,14 @@ function Get-AzureDevOpsServiceEndpoints {
             {
                 $endpoints += $endpointResult.results.value
             }
+        }
+        if ($endpoints.Count -eq 0)
+        {
+            $dummy = @{
+                id   = ''
+                name = ''
+            }
+            $endpoints += $dummy
         }
         $endpoints | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\ServiceEndpoint.json" -Force
     }
@@ -1145,6 +1169,14 @@ function Get-AzureDevOpsPlans {
             {
                 $Plans += $PlansResult.results.value
             }
+        }
+        if ($Plans.Count -eq 0)
+        {
+            $dummy = @{
+                id   = ''
+                name = ''
+            }
+            $Plans += $dummy
         }
         $Plans | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Plans.json" -Force
     }
@@ -1366,7 +1398,7 @@ function Main {
 #            for($inc = 1; $inc -le 4; $inc++) {
 #                Update-ConsoleLine -Line ($timerpos + $inc)
 #            }
-            Start-Sleep -Milliseconds 500
+            Start-Sleep -Milliseconds 200
         }
         Clear-Host
         Update-ConsoleLine -line 1 -Message "Performing Post Processing to give friendly tokens and descriptors..."
@@ -1392,18 +1424,26 @@ function Main {
         )
         $zipFolder = ".\data\$($OrgName)Info_$(Get-Date -Format "yyyyMMdd_hhmmss")"
         New-Item -ItemType Directory -Path $zipFolder | Out-Null
-        # sometimes this can take a minute as the permissions file does not immediately release dispite close, dispose and manually starting GC.
-        # may need to redo that as a using block
-        Copy-Item -Path ".\data\Permissions_Readable.json" -Destination $zipFolder -Force
+        Update-ConsoleLine -line 1 -Message "Consolidating Data files for archival..."
+        Update-ConsoleLine -line 2
+        Copy-Item -Path ".\data\Permissions_Readable.json" -Destination $zipFolder -Force -Verbose
         foreach ($file in $files) {
-            Move-Item -Path $file -Destination $zipFolder -Force
+            Update-ConsoleLine -Line 3
+            Update-ConsoleLine -Line 2
+            Move-Item -Path $file -Destination $zipFolder -Force -Verbose
         }
-        Compress-Archive -Path $zipFolder -DestinationPath "$zipFolder.zip" -Force -CompressionLevel Optimal
-
+        Clear-Host
+        Update-ConsoleLine -Line 1 -Message "Archiving files to $zipFolder.zip..."
+        Update-ConsoleLine -Line 2
+        Compress-Archive -Path "$zipFolder\*" -DestinationPath "$zipFolder.zip" -Force -CompressionLevel Optimal
+        Update-ConsoleLine -Line 1 -Message "Cleaning up Data files..."
+        Update-ConsoleLine -Line 2
         Remove-Item -Path $zipFolder -Recurse -Force -ErrorAction SilentlyContinue
         $stopwatch.Stop()
         [Console]::CursorVisible = $true
-        Update-ConsoleLine -Line 3 -Message ("Total Execution time: {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
+        Update-ConsoleLine -Line 1 -Message "Permissions file     : $scriptPath/data/Permissions_Readable.json" 
+        Update-ConsoleLine -Line 2 -Message "Data files           : $scriptPath/data/$($zipFolder.Replace("\","/")).zip"
+        Update-ConsoleLine -Line 3 -Message ("Total Execution time : {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
         Update-ConsoleLine -Line 4 -Message "All jobs completed successfully."
         Update-ConsoleLine -Line 5
     }

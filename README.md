@@ -11,7 +11,7 @@
 
 ## Requirements:
 - PCA access in org 
-  - I've made an effort to handle issues where you do not have permissions to see something, but I cannot say for sure that I have caught all possible permissions issues you might hit. if you are not a PC, you are getting a best effort.
+  - I've made an effort to handle issues where you do not have permissions to see something, but I cannot say for sure that I have caught all possible permissions issues you might hit. if you are not a PCA, you are getting a best effort.
 - Sufficient System Memory to hold sections of information as they are pulled can be a Gb.
 - Sufficient disk space to copy information locally, for large orgs this can be multiple Gbs.
 - The script is designed to keep you under the Throttle limits, but Basic + Test Plan may help if you see a lot of issues.
