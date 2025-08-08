@@ -24,37 +24,44 @@
 - Once the token is aquired you will be able to use it until expired without the previous steps.
 - Some Orgs may have enough data in some areas that this can take an extended amount of time.  You can periodically check the size of the Json file permissions and identities to make sure they are growing.  For moderately sized orgs this may take 10-15 minutes, Very large Orgs may take an hour or more.
 - The Application will update you on the status of the Job to pull information for each area: 
-  
-  > GetPermissionsJob         : Running
-  > GetProjectsJob            : Completed
-  > GetGroupsJob              : Completed
-  > GetUsersJob               : Running
-  > GetReposJob               : Running
-  > GetProcessesJob           : Completed
-  > GetClassificationNodesJob : Completed
-  > GetQueriesJob             : Running
-  > GetAnalyticsViewsJob      : Running
-  > GetServiceEndpointsJob    : Completed
-  > GetDashboardsJob          : Not Started
-  > GetPlansJob               : Not Started
-  > GetClassificationNodesJob : Not Started
-  > Execution time            : 00:02:30
+
+```  
+    GetPermissionsJob         : Running
+    GetProjectsJob            : Completed
+    GetGroupsJob              : Completed
+    GetUsersJob               : Running
+    GetReposJob               : Running
+    GetProcessesJob           : Completed
+    GetClassificationNodesJob : Completed
+    GetQueriesJob             : Running
+    GetAnalyticsViewsJob      : Running
+    GetServiceEndpointsJob    : Completed
+    GetDashboardsJob          : Not Started
+    GetPlansJob               : Not Started
+    GetClassificationNodesJob : Not Started
+    Execution time            : 00:02:30
+```
 
 - Once all the Data is pulled locally to the ./data folder as JSON Files, we will process the file to make the Tokens human readable.
 
-  > Performing Post Processing to give friendly tokens and descriptors...
-  > Processed 5000 lines so far...
+```
+    Performing Post Processing to give friendly tokens and descriptors...
+    Processed 5000 lines so far...
+```
 
 - When the Processing is complete the script will Create a folder and move the data files to it
 
-  > Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)... <br><span style="color: yellow;">VERBOSE: Performing the operation "Move File" on target "Item: C:\Example.json Destination: C:\[orgname][timestamp]\Example.Json".</span>
+   Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)... 
+   <span style="color: yellow;">VERBOSE: Performing the operation "Move File" on target "Item: C:\Example.json Destination: C:\[orgname][timestamp]\Example.Json".</span>
 
 - Then the Script will Archive the data files 
 
-  > Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... <br><span style="color: yellow;">[████               Compressing C:\Example.json                                ]</span>
+    Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... 
+    <span style="color: yellow;">[████               Compressing C:\Example.json                                ]</span>
 
 - Then the script cleans up after itself by removing the uncompressed files
-  > Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... <br><span style="color: yellow;">VERBOSE: Performing the operation "Remove File" on target "Item: C:\[orgname][timestamp]\Example.Json".</span>
+    Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... 
+    <span style="color: yellow;">VERBOSE: Performing the operation "Remove File" on target "Item: C:\[orgname][timestamp]\Example.Json".</span>
 
 - When done the script will output a final update and complete
 
