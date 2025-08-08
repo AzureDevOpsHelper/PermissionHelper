@@ -47,17 +47,14 @@
 
 - When the Processing is complete the script will Create a folder and move the data files to it
 
-  > Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)...
-  > <span style="color: yellow;">VERBOSE: Performing the operation "Move File" on target "Item: C:\Example.json Destination: C:\[orgname][timestamp]\Example.Json".</span>
+  > Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)... <br><span style="color: yellow;">VERBOSE: Performing the operation "Move File" on target "Item: C:\Example.json Destination: C:\[orgname][timestamp]\Example.Json".</span>
 
 - Then the Script will Archive the data files 
 
-  > Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ...
-  > <span style="color: yellow;">[████               Compressing C:\Example.json                                ]</span>
+  > Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... <br><span style="color: yellow;">[████               Compressing C:\Example.json                                ]</span>
 
 - Then the script cleans up after itself by removing the uncompressed files
-  > Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ...
-  > VERBOSE: Performing the operation "Remove File" on target "Item: C:\[orgname][timestamp]\Example.Json".</span>
+  > Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... <br><span style="color: yellow;">VERBOSE: Performing the operation "Remove File" on target "Item: C:\[orgname][timestamp]\Example.Json".</span>
 
 - When done the script will output a final update and complete
 
