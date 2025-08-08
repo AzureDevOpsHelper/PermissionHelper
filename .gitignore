@@ -18,3 +18,5 @@ data/Permissions_Readable.json
 data/Errors.log
 # Archives
 data/*.zip
+# Subfolders
+data/**/

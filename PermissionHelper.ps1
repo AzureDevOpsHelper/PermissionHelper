@@ -81,7 +81,8 @@ function Update-Log {
     }
     if ($null -ne $ErrorM)
     {    
-        $_ | Format-List | Out-File -FilePath ".\data\Errors.log" -Append -Force
+        #$_ | Format-List | Out-File -FilePath ".\data\Errors.log" -Append -Force
+        $ErrorM | ConvertFrom-Json | ConvertTo-Json -Depth 10 | Out-File -FilePath ".\data\Errors.log" -Append -Force
     }
     "---------------------------------------------------------------------------------------------------------------`r`n" | Out-File -FilePath ".\data\Errors.log" -Append -Force
     
@@ -955,19 +956,29 @@ function Get-AzureDevOpsAnalyticsViews {
         {
             $viewUrl = "$($orgUrl)/$($project.Name)/_apis/Analytics/Views?api-version=7.2-preview.1"
             $viewUrl = [System.Uri]::EscapeUriString($viewUrl)
+            $ViewsResult = @()
             try
             {
                 $ViewsResult = GET-AzureDevOpsRestAPI -RestAPIUrl $viewUrl -Authheader $Authheader
             }
             Catch 
             {
-                if (-not ($_.innerException.message).Contains("VS403490"))
+                $errorContent = $_.ErrorDetails
+                if ($null -ne $errorContent) 
                 {
-                    throw $_
-                }
+                    $message = $errorContent.Message
+                    if ($message.Contains("VS403490")) {
+                        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "permissions error for $($project.name) (continue)" -ErrorM $_.innerException
+                        # Execution will continue here
+                    } 
+                    else 
+                    {
+                        throw $_.innerException
+                    }
+                } 
                 else 
                 {
-                    Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Permissions Error while getting Analytics Views (non-blocking)" -URL $viewUrl -ErrorM $_
+                    throw $_
                 }
             }
             if ($null -ne $ViewsResult.results.value) 
@@ -975,19 +986,12 @@ function Get-AzureDevOpsAnalyticsViews {
                 $Views += $ViewsResult.results.value
             }
         }
-#        if ($Views.Count -eq 0)
-#        {
-#            $dummyString = "[`n    {`n        `"id`": `"`",`n        `"name`": `"`"`n    }`n]"
-#            $dummyString | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
-#        }
-#        else 
-#        {
-            $Views | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
-#        }
+        $Views | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\AnalyticsViews.json" -Force
     }
     Catch 
     {
-        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Error while getting Analytics Views for $($orgUrl)" -URL $viewUrl -ErrorM $_
+        Update-Log -Function "Get-AzureDevOpsAnalyticsViews" -Message "Error while getting Analytics Views for $($orgUrl)" -URL $orgUrl -ErrorM $_
+        throw $_
     }
     finally 
     {
@@ -1114,18 +1118,40 @@ function Get-AzureDevOpsPlans {
         foreach ($project in $projects)
         {
             $PlansUrl = "$($orgUrl)/$($project.name)/_apis/work/plans?api-version=7.2-preview.1"
-            $PlansResult = GET-AzureDevOpsRestAPI -RestAPIUrl $PlansUrl -Authheader $Authheader
-            $Plans += $PlansResult.results.value
+            try
+            {
+                $PlansResult = GET-AzureDevOpsRestAPI -RestAPIUrl $PlansUrl -Authheader $Authheader
+            }
+            Catch {
+                $errorContent = $_.ErrorDetails
+                if ($null -ne $errorContent) 
+                {
+                    $message = $errorContent.Message
+                    if (($message).Contains("TF50309")) {
+                        Update-Log -Function "Get-AzureDevOpsPlans" -Message "permissions error for $($project.name) (continue)" -ErrorM $_.innerException
+                        # Execution will continue here
+                    } 
+                    else 
+                    {
+                        throw $_.innerException
+                    }
+                } 
+                else 
+                {
+                    throw $_
+                }
+            }
+            if ($null -ne $PlansResult.results.value) 
+            {
+                $Plans += $PlansResult.results.value
+            }
         }
         $Plans | ConvertTo-Json -Depth 100 | Out-File -FilePath ".\data\Plans.json" -Force
     }
     Catch 
     {
-        Update-Log -Function "Get-AzureDevOpsPlans" -Message "Error while getting Plans for $($DashboardsUrl)" -URL $reposUrl -ErrorM $_
-        if (-not ($_.message).Contains("TF50309"))
-        {
-            throw $_
-        }
+        Update-Log -Function "Get-AzureDevOpsPlans" -Message "Error while getting Plans for $($orgUrl)" -URL $orgUrl -ErrorM $_
+        throw $_
     }
     finally 
     {
@@ -1394,10 +1420,10 @@ function Main {
     }
 }
 
-$Global:Console = [hashtable]::Synchronized(@{
-    Lock   = [System.Threading.Mutex]::new()
-    Line   = [int] 0
-})
+#$Global:Console = [hashtable]::Synchronized(@{
+#    Lock   = [System.Threading.Mutex]::new()
+#    Line   = [int] 0
+#})
 
 if (-not $env:IS_CHILD_JOB) {
     Main
