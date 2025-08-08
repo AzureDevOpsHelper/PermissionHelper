@@ -51,24 +51,32 @@
 
 - When the Processing is complete the script will Create a folder and move the data files to it
 
+```
    Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)... 
-   <span style="color: yellow;">VERBOSE: Performing the operation "Move File" on target "Item: C:\Example.json Destination: C:\[orgname][timestamp]\Example.Json".</span>
+   VERBOSE: Performing the operation "Move File" on target "Item: C:\Example.json Destination: C:\[orgname][timestamp]\Example.Json".
+```
 
 - Then the Script will Archive the data files 
 
+```
     Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... 
-    <span style="color: yellow;">[████               Compressing C:\Example.json                                ]</span>
-
+    [████               Compressing C:\Example.json                                ]
+```
 - Then the script cleans up after itself by removing the uncompressed files
+
+```
     Archiving files to C:\[orgname][timestamp]\[orgname][timestamp].zip ... 
-    <span style="color: yellow;">VERBOSE: Performing the operation "Remove File" on target "Item: C:\[orgname][timestamp]\Example.Json".</span>
+    <span style="color: yellow;">VERBOSE: Performing the operation "Remove File" on target "Item: C:\[orgname][timestamp]\Example.Json".
+```
 
 - When done the script will output a final update and complete
 
-  > Permissions file     : C:\[orgname][timestamp]\Example.json
-  > Data files           : C:\[orgname][timestamp]\[orgname][timestamp].zip
-  > Total Execution time : 00:05:00
-  > PS C:\>
+```
+   Permissions file     : C:\[orgname][timestamp]\Example.json
+   Data files           : C:\[orgname][timestamp]\[orgname][timestamp].zip
+   Total Execution time : 00:05:00
+   PS C:\>
+```
 
 - Errors, Warnings and other information including tarpits and blocking are saved to the error.log file.
   - The permissions_readable.json will be in both the folder and in the zip file for convinience.
