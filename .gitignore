@@ -1,0 +1,22 @@
+# Data JSON files
+data/Groups.json
+data/Projects.json
+data/Repositories.json
+data/Queries.json
+data/Users.json
+data/Identities.json
+data/AnalyticsViews.json
+data/ServiceEndpoint.json
+data/Processes.json
+data/Dashboards.json
+data/Plans.json
+data/Areas.json
+data/Iterations.json
+data/Permissions.json
+data/Permissions_Readable.json
+# Log Files
+data/Errors.log
+# Archives
+data/*.zip
+# Subfolders
+data/**/
