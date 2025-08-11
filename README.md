@@ -8,16 +8,17 @@
   
   ### Key Functions and Their Roles
    - Authentication
-   - Get-EntraToken / Get-GraphToken
-   - Obtain access tokens using the Az PowerShell module for authenticating against Azure DevOps REST APIs and Microsoft Graph API.
+     - Get-EntraToken / Get-GraphToken
+     - Obtain access tokens using the Az PowerShell module for authenticating against Azure DevOps REST APIs and Microsoft Graph API.
    - REST API Calls
-   - GET-AzureDevOpsRestAPI
-   - Wrapper for calling Azure DevOps REST APIs with error handling, throttling, and logging.
+     - GET-AzureDevOpsRestAPI
+     - Wrapper for calling Azure DevOps REST APIs with error handling, throttling, and logging.
    - Data Extraction Functions
-   - These functions use the REST API to extract different types of Azure DevOps data and write them to local JSON files:
+     - These functions use the REST API to extract different types of Azure DevOps data and write them to local JSON files:
   
   ### Conversion & Enrichment
-  - Convert-Permissions: Reads the raw permissions file, then enriches and replaces technical IDs/tokens/descriptors (e.g., GUIDs) with human-readable names by cross-referencing the other extracted files (groups, projects, repos, etc.). The output is a more readable permissions file for auditing or reporting.
+  - Convert-Permissions: Reads the raw permissions file, then enriches and replaces technical IDs/tokens/descriptors (e.g., GUIDs) with human-readable names by cross-referencing the other extracted files (groups, projects, repos, etc.).
+    - The output is a more readable permissions file for auditing or reporting.
   
   ### Utility & Logging
   - Update-ConsoleLine: Updates a specific line in the console output (for progress reporting).
