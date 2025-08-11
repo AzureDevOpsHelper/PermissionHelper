@@ -1,13 +1,43 @@
 # PermissionHelper
 
 ## What is PermissionsHelper!?
-- Pulls info and creates a big JSON of all the permissions in an org.
-- Works great for small to mid-sized orgs!
-- Very Large Orgs work, but it can take an extended amount of time if you have:
-  - A large number of Users/Groups.
-  - A large number of Projects. 
-  - A large history (we do not clean up ACES so we have to pull, process and discard disabled ones).
-  - Many deleted objects (projects, groups, repos etc.) for the same reason as above.
+  The file PermissionHelper.ps1 is a large PowerShell script specifically designed to extract, process, and convert Azure DevOps permissions and related metadata for an organization. It acts as a helper tool for Azure DevOps administrators who need to audit, analyze, or export permission settings and organizational data.
+  
+  ### High-Level Overview
+  This script automates the process of gathering Azure DevOps permissions, groups, projects, repositories, users, queries, service endpoints, dashboards, plans, iterations, and areas, and converts them into readable formats for analysis.
+  
+  ### Key Functions and Their Roles
+   - Authentication
+     - Get-EntraToken / Get-GraphToken
+     - Obtain access tokens using the Az PowerShell module for authenticating against Azure DevOps REST APIs and Microsoft Graph API.
+   - REST API Calls
+     - GET-AzureDevOpsRestAPI
+     - Wrapper for calling Azure DevOps REST APIs with error handling, throttling, and logging.
+   - Data Extraction Functions
+     - These functions use the REST API to extract different types of Azure DevOps data and write them to local JSON files:
+  
+  ### Conversion & Enrichment
+  - Convert-Permissions: Reads the raw permissions file, then enriches and replaces technical IDs/tokens/descriptors (e.g., GUIDs) with human-readable names by cross-referencing the other extracted files (groups, projects, repos, etc.).
+    - The output is a more readable permissions file for auditing or reporting.
+  
+  ### Utility & Logging
+  - Update-ConsoleLine: Updates a specific line in the console output (for progress reporting).
+  - Update-Log: Appends detailed log entries to an error log file.
+  
+  ### What Does It Actually Do?
+  - Authenticates to Azure DevOps and Graph APIs using the Az module.
+  - Extracts all relevant security and organizational data from Azure DevOps using REST APIs (permissions, projects, groups, users, etc.).
+  - Writes raw data to local JSON files in the .\data\ folder.
+  - Processes and enriches the permissions data, translating technical identifiers and tokens into human-readable names (group names, project names, etc.).
+  - Outputs a readable permissions file for use in audits, reporting, or migration scenarios.
+  - Handles errors and logs all major actions and issues for troubleshooting.
+  ### Typical Use Case
+  An Azure DevOps administrator runs this script to:
+  - Audit who has access to what resources.
+  - Extract permissions for analysis outside of Azure DevOps.
+  - Prepare for compliance, security reviews, or migrations.
+  ### Summary
+  PermissionHelper.ps1 is a comprehensive Azure DevOps permissions audit and export tool. It automates the collection and conversion of permissions and related organizational data into a readable format for analysis and reporting.
 
 ## Requirements:
 - PCA access in org 
