@@ -515,6 +515,14 @@ function Convert-Permissions {
                 {
                     $newline = $line
                     $newline = $newline.Split("\\") 
+                    if ($null -eq $newline[1])
+                    {   #covers BindPend users
+                        $newline = $newline.Split(":") 
+                        if ($null -eq $newline[1])
+                        {   #anything else
+                            $newline = $line.Replace("    `"friendlydescriptor`": `"","")
+                        }
+                    }
                     $UPN = $newline[1].TrimEnd("`",")
                     $line = "    `"friendlydescriptor`": `"$UPN`","
                 }
