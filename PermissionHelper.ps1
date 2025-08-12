@@ -214,6 +214,9 @@ function Get-AzureDevOpsPermissions {
             . "$scriptPath"
             $permissionUrl = $_orgUrl + "/_apis/accesscontrollists/" + $namespace.namespaceId + "?includeExtendedInfo=true&recurse=true&api-version=7.2-preview.1"
             $permissionResult = GET-AzureDevOpsRestAPI -RestAPIUrl $permissionUrl -Authheader $Authheader
+
+            #Update-Log -Function "Get-AzureDevOpsPermissions" -Message "`n`tNameSpace Name:       : $($namespace.name)`n`tNameSpace DisplayName : $($namespace.displayName)`n`tNameSpace ID          : $($namespace.namespaceId)`n`tCount                 : $($permissionResult.results.value.Count)"
+
             $permissionResult.results.value | ForEach-Object -ThrottleLimit 15 -Parallel {   
                 $permission = $_
                 $namespace  = $using:namespace
@@ -300,7 +303,7 @@ function Get-AzureDevOpsPermissions {
     }
     catch 
     {
-        Update-Log -Function "Get-AzureDevOpsPermissions" -Message "Error while getting atomic permissions for $($namespace.name) - ($($namespace.namespaceId))" -URL $permissionUrl -ErrorM $_
+        Update-Log -Function "Get-AzureDevOpsPermissions" -Message "Error while getting atomic permissions for $($namespace.name) - ($($namespace.namespaceId))" -URL $permissionUrl -ErrorM $_.InnerException
         throw $_ 
     }
     finally 
@@ -1474,6 +1477,7 @@ function Main {
     {
         $env:IS_CHILD_JOB = $false
         Remove-Variable -Name * -ErrorAction SilentlyContinue
+        Exit
     }
 }
 
