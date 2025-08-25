@@ -329,13 +329,12 @@ function Convert-Permissions {
         $groups = Get-Content -Path $groupfile.FullName -Raw
         $groups = ($groups | ConvertFrom-Json)  
         
-        $TFID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") -and ($_.principalName).Contains("[TEAM FOUNDATION]")} | Select-Object -First 1 -Property domain).domain
+        $TFID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") -and (($_.principalName).Contains("[TEAM FOUNDATION]") )} | Select-Object -First 1 -Property domain).domain
         $TFID = $TFID.TrimStart('vstfs:///Framework/IdentityDomain/')
         $TFID = @{ 
             id   = $TFID
             name = "[TEAM FOUNDATION]"
         }
-
         $orgname = ($orgUrl.Split("/"))[-1]
         $OrgID = ($groups | Where-Object { ($_.domain).Contains("vstfs:///Framework/IdentityDomain/") -and ($_.principalName).Contains("[$orgname]")} | Select-Object -First 1 -Property domain).domain
         if ($null -eq $OrgID)
@@ -347,12 +346,12 @@ function Convert-Permissions {
         }
         else
         {
-            $OrgID = $OrgID.TrimStart('vstfs:///Framework/IdentityDomain/')
             $OrgID = @{
-                id   = $OrgID
+                id   = $OrgID.Replace("vstfs:///Framework/IdentityDomain/","")
                 name = "[$orgname]"
             }
         }
+
         $groups1 = $groups | Select-Object -Property SID, principalName
         $groups2 = $groups | Select-Object -Property originId, displayName
         $groups2 = $groups2 | Group-Object -AsHashTable -Property originId
@@ -590,14 +589,14 @@ function Convert-Permissions {
                                     {
                                         if ($TFID.id -eq  $match.Value)
                                         {
-                                            $line = $line.Replace($match.Value,$TFID.name)
+                                            $line = $line.Replace($match.Value,($TFID.name))
                                         }
                                         else
                                         {
                                             if ($OrgID.id -eq  $match.Value)
                                             {
-                                                $line = $line.Replace($match.Value,$OrgID.name)
-                                            }                            
+                                                $line = $line.Replace($match.Value,($OrgID.name))
+                                            }
                                             else
                                             {
                                                 $ProcessName = $Processes[$match.Value].name
@@ -655,6 +654,13 @@ function Convert-Permissions {
                                                                                 $line = $line.Replace($match.Value,$areaName)
                                                                                 $line = $line.Replace("vstfs:///Classification/Node/","")
                                                                             }
+                                                                            #else
+                                                                            #{
+                                                                            #    "---------------------------------------------------------------------------------------------------------------" | Out-File ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                            #    "Date/Time : $(Get-Date -Format "yyyy/MM/dd HH:mm:ss.fff")" | Out-File -FilePath ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                            #    $line | Out-File -FilePath ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                            #    "---------------------------------------------------------------------------------------------------------------" | Out-File ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                            #}
                                                                         }
                                                                     }
                                                                 }
@@ -1314,7 +1320,8 @@ function Main {
         Remove-Item -Path ".\data\Errors.log" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Plans.json" -Force -ErrorAction SilentlyContinue
         Remove-Item -Path ".\data\Areas.json" -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path ".\data\Iterations.json" -Force -ErrorAction Sil
+        Remove-Item -Path ".\data\Iterations.json" -Force -ErrorAction SilentlyContinue
+        #Remove-Item -Path ".\data\Permissions_LookupMisses.log" -Force -ErrorAction SilentlyContinue
         Update-Log -Function "Main" -Message "Starting execution of PermissionHelper.ps1"
         Write-Host "Please enter your Org Name"
         $orgName = Read-Host
@@ -1476,8 +1483,10 @@ function Main {
     finally 
     {
         $env:IS_CHILD_JOB = $false
-        Remove-Variable -Name * -ErrorAction SilentlyContinue
-        Exit
+        $sysvars = @("__VSCodeState","$","^","args","Error","input","IsCoreCLR","IsLinux","IsMacOS","IsWindows","MyInvocation","PROFILE","PSBoundParameters","PSCommandPath","PSScriptRoot","PWD","StackTrace")
+        Get-Variable | Where-Object { $_.Name -notin $sysvars -and $_.Description -eq "" } | Format-List | Remove-Variable -Force -ErrorAction SilentlyContinue
+        Get-Module | Remove-Module -ErrorAction SilentlyContinue
+        #Get-Command -CommandType Function | ForEach-Object { Remove-Item "function:$($_.Name)" -ErrorAction SilentlyContinue } -ErrorAction SilentlyContinue
     }
 }
 

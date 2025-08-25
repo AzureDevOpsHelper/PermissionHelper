@@ -117,8 +117,6 @@
 ### Need Investigations:
 - Resolve Service Accounts and Service Principals Ids.
   - We may need to go to GraphAPI for this.
-- Resolve Workspace Tokens.
-  - Seems like this is associated with VS Profile.
 - Service Endpoints APis seem not to give all results.
   - May need to add a lookup in the convert-permissions like we did for some OOB group SIDs.
 
@@ -127,3 +125,9 @@
 - Wire up inheritance chains
 - Investigate feasability of per project runs (though we may still have to pull full Identities, groups etc for this to work.)
 - Configurable or adaptable Thread pool sizes for best experience.
+- piggy back on tf.exe to look at converting Workspace ids to names.... this will be inefficient and should likely be opt in/out via config.
+
+### Note
+There is no API exposed that can convert the Workspace ID to a Workspace name for TFVC Items.  This is due to the fact that TFVC is Feature Complete and no additional work will be done on this are aof the product.  If you find that you need to gather more information about a TFVC Workspace you can use the ID and name interchangably in the TF.exe commands and you should be able to get details from there.
+
+There is a "group" that is formatted as: "[\<orgname\>]\DirectoryServiceAddMember-\<TenantName\>-Group" You may see permissions for this group if you are an Owner/PCA but there is no API to decode this from the ID to the above name.  If you have 1 Guid that is not converted to a friendly name in your results this is likely the reason.  This group should not be used or even seen in day to day operations, do not modify this groups permissions.
