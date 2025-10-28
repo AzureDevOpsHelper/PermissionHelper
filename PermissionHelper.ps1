@@ -1497,9 +1497,9 @@ function Main {
         }
         $stopwatch.Stop()
         [Console]::CursorVisible = $true
-        Update-ConsoleLine -Line 1 -Message  "Permissions file     : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\Permissions_Readable.json" 
-        Update-ConsoleLine -Line 2 -Message  "Data files           : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\$($zipName.Replace("/","\"))"
-        Update-ConsoleLine -Line 3 -Message ("Total Execution time : {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
+        Update-ConsoleLine -Line 1 -Message  "Permissions : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\Permissions_Readable.json" 
+        Update-ConsoleLine -Line 2 -Message  "Data files  : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\$($zipName.Replace("/","\"))"
+        Update-ConsoleLine -Line 3 -Message ("Total Time  : {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
         Update-ConsoleLine -Line 4 -Message "All jobs completed successfully."
         Update-ConsoleLine -Line 5
     }
