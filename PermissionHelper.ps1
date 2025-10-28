@@ -654,13 +654,41 @@ function Convert-Permissions {
                                                                                 $line = $line.Replace($match.Value,$areaName)
                                                                                 $line = $line.Replace("vstfs:///Classification/Node/","")
                                                                             }
-                                                                            #else
-                                                                            #{
-                                                                            #    "---------------------------------------------------------------------------------------------------------------" | Out-File ".\data\Permissions_LookupMisses.log" -Append -Force
-                                                                            #    "Date/Time : $(Get-Date -Format "yyyy/MM/dd HH:mm:ss.fff")" | Out-File -FilePath ".\data\Permissions_LookupMisses.log" -Append -Force
-                                                                            #    $line | Out-File -FilePath ".\data\Permissions_LookupMisses.log" -Append -Force
-                                                                            #    "---------------------------------------------------------------------------------------------------------------" | Out-File ".\data\Permissions_LookupMisses.log" -Append -Force
-                                                                            #}
+                                                                            else
+                                                                            {
+                                                                                if ($line.Contains("endpoints/"))
+                                                                                {
+                                                                                    try
+                                                                                    {
+                                                                                        $proj = $line.TrimStart("    `"friendlyToken`": `"endpoints").TrimEnd("`",")
+                                                                                        $proj = $proj.Split("/")
+                                                                                        $SCUrl = "$($orgUrl)/$($proj[1])/_apis/serviceendpoint/endpoints/$($match.Value)?api-version=7.2-preview.4"
+                                                                                        $Result =  GET-AzureDevOpsRestAPI -RestAPIUrl $SCUrl -Authheader $Authheader
+                                                                                        $Result = $Result.results
+                                                                                        $name = "$($Result.type) - $($Result.owner) - $($Result.name)"
+                                                                                    }
+                                                                                    catch 
+                                                                                    {
+                                                                                        Update-Log -Function "Convert-Permissions" -Message "Error while attempting to find endpoint $($match.Value) in $($proj[1]) `nContinue without this info (added token to groups to avoid future calls)" -URL $SCUrl -ErrorM $_
+                                                                                    }
+                                                                                    if ($name -ne " -  - ")
+                                                                                    {
+                                                                                        $line = $line.Replace($match.Value,$name)
+                                                                                        $serviceEndpoint = @{     
+                                                                                            id = $match.Value 
+                                                                                            name = $name
+                                                                                        }
+                                                                                        $serviceEndpoints[$match.Value] = $serviceEndpoint
+                                                                                    }
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    "---------------------------------------------------------------------------------------------------------------" | Out-File ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                                    "Date/Time : $(Get-Date -Format "yyyy/MM/dd HH:mm:ss.fff")" | Out-File -FilePath ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                                    $line | Out-File -FilePath ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                                    "---------------------------------------------------------------------------------------------------------------" | Out-File ".\data\Permissions_LookupMisses.log" -Append -Force
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -1469,9 +1497,9 @@ function Main {
         }
         $stopwatch.Stop()
         [Console]::CursorVisible = $true
-        Update-ConsoleLine -Line 1 -Message  "Permissions file     : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\Permissions_Readable.json" 
-        Update-ConsoleLine -Line 2 -Message  "Data files           : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\$($zipName.Replace("/","\"))"
-        Update-ConsoleLine -Line 3 -Message ("Total Execution time : {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
+        Update-ConsoleLine -Line 1 -Message  "Permissions : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\Permissions_Readable.json" 
+        Update-ConsoleLine -Line 2 -Message  "Data files  : $($scriptPath.Replace("\PermissionHelper.ps1",''))$($zipFolder.Replace(".",'').Replace("/","\"))\$($zipName.Replace("/","\"))"
+        Update-ConsoleLine -Line 3 -Message ("Total Time  : {0:hh\:mm\:ss}" -f $stopwatch.Elapsed)
         Update-ConsoleLine -Line 4 -Message "All jobs completed successfully."
         Update-ConsoleLine -Line 5
     }
