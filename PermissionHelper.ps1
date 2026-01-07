@@ -1476,7 +1476,7 @@ function Main {
         $zipFolder = "./data/$zipname"
         $zipName = $zipName += ".zip" 
         New-Item -ItemType Directory -Path $zipFolder | Out-Null
-        Update-ConsoleLine -line 1 -Message "Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)..."
+        Update-ConsoleLine -line 1 -Message "Archiving (it may take a minute to move Permissions.json)..."
         Update-ConsoleLine -line 2
         foreach ($file in $files) {
             Update-ConsoleLine -Line 3
