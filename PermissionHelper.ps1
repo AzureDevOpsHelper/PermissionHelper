@@ -32,7 +32,14 @@ function Get-EntraToken {
         $result = Get-AzAccessToken -ResourceUrl '499b84ac-1321-427f-aa17-267ca6975798'        
         Clear-Host
     }
-    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
+    if ($result.Token -is [System.Security.SecureString]) 
+    {
+        $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
+    } 
+    else 
+    {
+        $plainToken = $result.Token
+    }
     $AuthHeader = "Bearer $plainToken"
     $result | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
     return $result
@@ -1476,7 +1483,7 @@ function Main {
         $zipFolder = "./data/$zipname"
         $zipName = $zipName += ".zip" 
         New-Item -ItemType Directory -Path $zipFolder | Out-Null
-        Update-ConsoleLine -line 1 -Message "Consolidating Data files for archival (it may take up to a minute to begin moving Permissions.json)..."
+        Update-ConsoleLine -line 1 -Message "Archiving (it may take a minute to move Permissions.json)..."
         Update-ConsoleLine -line 2
         foreach ($file in $files) {
             Update-ConsoleLine -Line 3
