@@ -32,7 +32,14 @@ function Get-EntraToken {
         $result = Get-AzAccessToken -ResourceUrl '499b84ac-1321-427f-aa17-267ca6975798'        
         Clear-Host
     }
-    $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
+    if ($result.Token -is [System.Security.SecureString]) 
+    {
+        $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($result.Token))
+    } 
+    else 
+    {
+        $plainToken = $result.Token
+    }
     $AuthHeader = "Bearer $plainToken"
     $result | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
     return $result
