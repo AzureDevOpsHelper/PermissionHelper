@@ -112,6 +112,21 @@
   - The permissions_readable.json will be in both the folder and in the zip file for convinience.
 
 
+## Understanding the Output: ACE/ACL Structures
+
+The output files contain Azure DevOps permissions encoded in **Access Control Entry (ACE)** and **Access Control List (ACL)** structures. These use bitfield-based permission encoding that requires understanding to interpret effectively.
+
+For a comprehensive guide on:
+- **How to query and retrieve ACLs** for any namespace
+- **Decoding permission bits** to human-readable names
+- **Finding and interpreting deny permissions**
+- **Modifying individual permissions** safely
+- **Understanding effective permissions** (allow AND NOT deny)
+
+See: **[AZURE_DEVOPS_ACE_ACL_GUIDE.md](AZURE_DEVOPS_ACE_ACL_GUIDE.md)**
+
+This guide provides namespace-agnostic examples using both REST API and Azure DevOps CLI for working with permissions programmatically.
+
 ## To Dos:
 
 ### Need Investigations:
